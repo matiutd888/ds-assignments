@@ -27,7 +27,6 @@ impl Fibonacci {
             let x: u8 = iter[0].wrapping_add(iter[1]);
             iter[0] = iter[1];
             iter[1] = x;
-            println!("Immutable i32: {:?}", iter);
         }
 
         return iter[1];
@@ -44,24 +43,20 @@ impl Iterator for Fibonacci {
     /// doesn't fit u128, the sequence shall end (the iterator shall return `None`).
     /// The calculations shall be fast (recursive calculations are **un**acceptable).
     fn next(&mut self) -> Option<Self::Item> {
-        let mut ret: Option<Self::Item> = None;
-
         if self.count <= 1 {
-            ret = Some(self.mem[self.count]);
             self.count = self.count + 1;
-        } else {
-            ret = match self.mem[0].overflowing_add(self.mem[1]) {
-                (_, true) => None,
-                (n, false) => Some(n),
-            };
-
-            if let Some(i) = ret {
-                self.count = self.count + 1;
-                self.mem[0] = self.mem[1];
-                self.mem[1] = i;
-            }
+            return Some(self.mem[self.count - 1]);
         }
-        // println!("{:?}, {:?}, {:?}", ret, self.mem, self.count);
-        return ret;
+        let sum = match self.mem[0].overflowing_add(self.mem[1]) {
+            (_, true) => None,
+            (n, false) => Some(n),
+        };
+
+        if let Some(i) = sum {
+            self.count = self.count + 1;
+            self.mem[0] = self.mem[1];
+            self.mem[1] = i;
+        }
+        sum
     }
 }
