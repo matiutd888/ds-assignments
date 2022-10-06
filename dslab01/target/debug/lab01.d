@@ -1,0 +1,1 @@
+/home/mateusz/studia-current/sr/dslab01/target/debug/lab01: /home/mateusz/studia-current/sr/dslab01/main.rs /home/mateusz/studia-current/sr/dslab01/public_test.rs /home/mateusz/studia-current/sr/dslab01/solution.rs
