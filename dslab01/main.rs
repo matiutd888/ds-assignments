@@ -28,8 +28,24 @@ fn main() {
     println!("fibonacci(): {}", Fibonacci::fibonacci(nth));
 
     let mut fib = Fibonacci::new();
-    match fib.nth(nth) {
-        Some(num) => println!("iterator: {}", num),
-        None => println!("Sorry, the n-th Fibonacci number doesn't fit u128."),
+    if let Some(new_number) = fib.nth(nth) {
+        println!("fibonacci(): {:?}", new_number);
     }
+    if let Some(new_number) = fib.nth(0) {
+        println!("fibonacci(): {:?}", new_number);
+    }
+    if let Some(new_number) = fib.nth(0) {
+        println!("fibonacci(): {:?}", new_number);
+    }
+    // while let Some(num) = fib.next()  {
+    //     println!("next {}", num);
+    // }
+
+    // println!("Testing if it really ended!");
+    // {
+    //     println!("{:?}", fib.next());
+    //     println!("{:?}", fib.next());
+    //     println!("{:?}", fib.next());
+    //     println!("{:?}", fib.next());
+    // }
 }

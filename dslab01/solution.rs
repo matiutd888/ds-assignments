@@ -1,6 +1,7 @@
 pub struct Fibonacci {
-    mem: [u128; 2],
+    mem: [<Fibonacci as Iterator>::Item; 2],
     count: usize,
+    has_ended: bool,
 }
 
 impl Fibonacci {
@@ -9,6 +10,7 @@ impl Fibonacci {
         Fibonacci {
             mem: [0, 1],
             count: 0,
+            has_ended: false,
         }
     }
 
@@ -43,19 +45,22 @@ impl Iterator for Fibonacci {
     /// doesn't fit u128, the sequence shall end (the iterator shall return `None`).
     /// The calculations shall be fast (recursive calculations are **un**acceptable).
     fn next(&mut self) -> Option<Self::Item> {
+        if self.has_ended {
+            return None;
+        }
+
         if self.count <= 1 {
-            self.count = self.count + 1;
+            self.count += 1;
             return Some(self.mem[self.count - 1]);
         }
-        let sum = match self.mem[0].overflowing_add(self.mem[1]) {
-            (_, true) => None,
-            (n, false) => Some(n),
-        };
+        let sum: Option<u128> = self.mem[0].checked_add(self.mem[1]);
 
-        if let Some(i) = sum {
-            self.count = self.count + 1;
+        if let Some(new_val) = sum {
+            self.count += 1;
             self.mem[0] = self.mem[1];
-            self.mem[1] = i;
+            self.mem[1] = new_val;
+        } else {
+            self.has_ended = true;
         }
         sum
     }
