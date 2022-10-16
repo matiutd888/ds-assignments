@@ -9,6 +9,7 @@ type Task = Box<dyn FnOnce() + Send>;
 
 /// The thread pool.
 pub struct Threadpool {
+    // Pair (tasks, flag indicating whether threadpool is running) 
     data: Arc<(Mutex<(Vec<Task>, bool)>, Condvar)>,
     handles: Vec<Option<JoinHandle<()>>>, // Add here any fields you need.
                                           // We suggest storing handles of the worker threads, submitted tasks,
@@ -37,13 +38,13 @@ impl Threadpool {
     }
 
     /// Submit a new task.
-    /// TODO how does this function should behave when it is ended.
     pub fn submit(&self, task: Task) {
         let (tasks_and_flag, wait_for_task) = &*self.data;
         let mut guard = tasks_and_flag.lock().unwrap();
         let (tasks, _) = guard.deref_mut();
         let should_notify = tasks.is_empty();
         tasks.push(task);
+        // TODO does it matter in which order i execute these lines. I don't think so? 
         drop(guard);
         if should_notify {
             wait_for_task.notify_one();
@@ -68,10 +69,15 @@ impl Threadpool {
                 drop(guard);
                 break;
             }
+            if tasks.is_empty() { 
+                // I was woken up and it doesn't make sense why. 
+                // It shouldn't execute but let's check anyway
+                drop(guard);
+                continue;
+            }
             let new_task = tasks.pop().unwrap();
             drop(guard);
             new_task();
-
         }
         return ();
     }
@@ -87,7 +93,6 @@ impl Drop for Threadpool {
         let mut guard = tasks_and_flag.lock().unwrap();
         let (_, flag) = guard.deref_mut();
         *flag = false;
-
         drop(guard);
         wait_for_task.notify_all();
         for handle in self.handles.iter_mut() {

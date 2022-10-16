@@ -4,22 +4,20 @@ mod solution;
 use std::{sync::{Arc, Mutex}, thread, time::{Duration, Instant}};
 
 fn main() {
-    let shared_vec = Arc::new(Mutex::new(Vec::new()));
+    // let shared_vec = Arc::new(Mutex::new(Vec::new()));
     let pool = solution::Threadpool::new(3);
 
     let start = Instant::now();
-    for x in 0..7 {
-        let shared_vec_clone = shared_vec.clone();
+    for x in 0..5 {
+        // let shared_vec_clone = shared_vec.clone();
         pool.submit(Box::new(move || {
             // std::thread::sleep(std::time::Duration::from_millis(500));
-            let mut vec = shared_vec_clone.lock().unwrap();
-            vec.push(x);
-            println!("Data: {:#?}, elapsed {:?}", vec, start.elapsed());
-            drop(vec);
+            // let mut vec = shared_vec_clone.lock().unwrap();
+            // vec.push(x);
+            println!("elapsed {:?}: Thread {:#?} goes asleep,", start.elapsed(), x);
             std::thread::sleep(std::time::Duration::from_millis(1000));
-            vec = shared_vec_clone.lock().unwrap();
-            vec.push(x);
-            println!("Data: {:#?}, elapsed {:?}", vec, start.elapsed());
+        
+            println!("elapsed {:?}: Thread {:#?} wakes up", start.elapsed(), x);
         }));
     }
     // let pool = solution::Threadpool::new(4);
