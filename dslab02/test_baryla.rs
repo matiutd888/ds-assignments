@@ -3,15 +3,16 @@ mod tests {
     use crate::solution::Threadpool;
     use crossbeam_channel::unbounded;
     use ntest::timeout;
-    use core::time;
-    use std::{sync::{Arc, Mutex, atomic::{AtomicBool, Ordering, AtomicU64}, Barrier}, thread, time::Duration};
+    use std::sync::{Arc, Barrier};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::{thread, time};
 
     #[test]
     #[timeout(200)]
     fn smoke_test() {
         let (tx, rx) = unbounded();
         let pool = Threadpool::new(1);
-        
+
         pool.submit(Box::new(move || {
             tx.send(14).unwrap();
         }));
@@ -32,50 +33,6 @@ mod tests {
         rx.recv().unwrap();
     }
 
-    #[test]
-    #[timeout(10000)]
-    fn threadpool_concurrency_test() {
-        let pool = Threadpool::new(4);
-        
-        for i in 0..3 {    
-            pool.submit(Box::new(move || {
-                println!("I am thread {} and I am  going to sleep", i);
-                thread::sleep(Duration::new(1, 0));
-                println!("I am thread {} and I have woken up!", i);
-            }));
-        }
-    }
-    
-    #[test]
-    #[timeout(200)]
-    fn test_radwanski() {
-        let val = Arc::new(Mutex::new(0));
-        let pool = Threadpool::new(2);
-
-        let fun = |x: Arc<Mutex<i32>>| {
-            {
-                let mut state = x.lock().unwrap();
-                *state += 1;
-            }
-            loop {
-                let state = x.lock().unwrap();
-                if *state >= 2 {
-                    return;
-                }
-            }
-        };
-        let x1 = val.clone();
-        let x2 = val.clone();
-        pool.submit(Box::new(move || {
-            fun(x1.clone());
-        }));
-        pool.submit(Box::new(move || {
-            fun(x2.clone());
-        }));
-    }
-
-
-    // START Testy Karola Baryły
     #[test]
     #[timeout(200)]
     fn drop_test() {
@@ -193,7 +150,7 @@ mod tests {
 
     }
 
-    #[test]
+        #[test]
     #[timeout(200)]
     fn sum_1000_numbers() {
         let sum: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
@@ -267,6 +224,4 @@ mod tests {
 
         assert_eq!(value.load(Ordering::Relaxed), true);
     }
-
-    // END testy Karola Baryły
 }

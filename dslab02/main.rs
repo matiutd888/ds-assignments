@@ -5,7 +5,7 @@ use std::{sync::{Arc, Mutex}, thread, time::{Duration, Instant}};
 
 fn main() {
     // let shared_vec = Arc::new(Mutex::new(Vec::new()));
-    let pool = solution::Threadpool::new(3);
+    let pool = solution::Threadpool::new(10);
 
     let start = Instant::now();
     for x in 0..5 {
