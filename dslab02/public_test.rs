@@ -183,7 +183,7 @@ mod tests {
 
         // CRUCIAL!!! : Assuming  n := number of your CPU cores, put n-1 below!
         // (if you can't be sure, 3 should do)
-        let multi_threaded = measure_for_x_threads(5); // <-- put n-1 here!
+        let multi_threaded = measure_for_x_threads(3); // <-- put n-1 here!
 
         let factor = 2; // <-- pure heuresis
         println!("Single-threaded time: {:?}\nMulti-threaded time: {:?}", single_threaded, multi_threaded);
