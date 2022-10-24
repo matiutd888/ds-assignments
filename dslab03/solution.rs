@@ -49,6 +49,7 @@ impl FibonacciModule {
             limit,
             id,
             other: None,
+            // TODO we clone queues two times per module. Maybe there is a way not to do it? 
             queue: queue.clone(),
         };
         handle_result(queue.send(FibonacciSystemMessage::RegisterModule(f)));
