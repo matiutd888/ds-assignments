@@ -5,7 +5,6 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use rand::Rng;
 use std::collections::HashMap;
 
-
 use std::thread;
 use std::thread::JoinHandle;
 
@@ -30,7 +29,7 @@ fn handle_result<T: std::fmt::Debug>(result: Result<(), T>) {
         Err(it) => it,
         _ => return,
     };
-    eprint!("{:?}", x);
+    eprintln!("{:?}", x);
 }
 
 impl FibonacciModule {
@@ -50,7 +49,7 @@ impl FibonacciModule {
             limit,
             id,
             other: None,
-            queue: queue.clone()
+            queue: queue.clone(),
         };
         handle_result(queue.send(FibonacciSystemMessage::RegisterModule(f)));
         id
@@ -72,7 +71,11 @@ impl FibonacciModule {
         // the update of `self.num`:
         println!("Inside {}, value: {}", self.id, self.num);
 
-        handle_result(self.queue.send(FibonacciSystemMessage::Message { id: self.other.unwrap(), idx: idx + 1, num: self.num }));
+        handle_result(self.queue.send(FibonacciSystemMessage::Message {
+            id: self.other.unwrap(),
+            idx: idx + 1,
+            num: self.num,
+        }));
     }
 
     /// Handle the init-message.
@@ -83,7 +86,11 @@ impl FibonacciModule {
         self.other = Some(other);
         if self.num == FibonacciModule::B_MODULE_START_NUM {
             // We are the b.module, we should start
-            handle_result(self.queue.send(FibonacciSystemMessage::Message { id: other, idx: 1, num: 1 }));
+            handle_result(self.queue.send(FibonacciSystemMessage::Message {
+                id: other,
+                idx: 1,
+                num: 1,
+            }));
         }
     }
 }
@@ -117,8 +124,9 @@ pub(crate) enum FibonacciSystemMessage {
 pub(crate) fn run_executor(rx: Receiver<FibonacciSystemMessage>) -> JoinHandle<()> {
     thread::spawn(move || {
         let mut modules: HashMap<Ident, FibonacciModule> = HashMap::new();
-        
-        let register_module = |registered_modules: & mut HashMap<Ident, FibonacciModule>, module_to_register: FibonacciModule| {
+
+        let register_module = |registered_modules: &mut HashMap<Ident, FibonacciModule>,
+                               module_to_register: FibonacciModule| {
             if registered_modules.contains_key(&module_to_register.id) {
                 eprintln!("Module {} already registered!", &module_to_register.id);
             }
@@ -127,15 +135,20 @@ pub(crate) fn run_executor(rx: Receiver<FibonacciSystemMessage>) -> JoinHandle<(
 
         while let Ok(msg) = rx.recv() {
             match msg {
-                FibonacciSystemMessage::Init { id, other } => modules.get_mut(&id).unwrap().init(other),
-                FibonacciSystemMessage::RegisterModule(module) => register_module(& mut modules, module),
-                FibonacciSystemMessage::Message { id, idx, num } => modules.get_mut(&id).unwrap().message(idx, num),
+                FibonacciSystemMessage::Init { id, other } => {
+                    modules.get_mut(&id).unwrap().init(other)
+                }
+                FibonacciSystemMessage::RegisterModule(module) => {
+                    register_module(&mut modules, module)
+                }
+                FibonacciSystemMessage::Message { id, idx, num } => {
+                    modules.get_mut(&id).unwrap().message(idx, num)
+                }
                 FibonacciSystemMessage::Done => break,
             }
         }
     })
 }
-
 
 /// Calculate the `n`-th Fibonacci number.
 pub(crate) fn fib(n: usize) {
@@ -151,11 +164,17 @@ pub(crate) fn fib(n: usize) {
     assert_ne!(mod_a_id, mod_b_id);
 
     // Initialize the modules by sending `Init` messages:
-    let init_msg_b = FibonacciSystemMessage::Init { id: mod_b_id, other: mod_a_id };
-    let init_msg_a = FibonacciSystemMessage::Init { id: mod_a_id, other: mod_b_id };
-    
+    let init_msg_b = FibonacciSystemMessage::Init {
+        id: mod_b_id,
+        other: mod_a_id,
+    };
+    let init_msg_a = FibonacciSystemMessage::Init {
+        id: mod_a_id,
+        other: mod_b_id,
+    };
+
     handle_result(tx.send(init_msg_b));
-    handle_result(tx.send( init_msg_a));
+    handle_result(tx.send(init_msg_a));
     // Run the executor:
     run_executor(rx).join().unwrap();
 }
