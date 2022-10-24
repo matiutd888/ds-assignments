@@ -1,2 +1,4 @@
+**/*.zip
+*.zip
 **/target/
 **/Cargo.lock
