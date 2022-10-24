@@ -1,4 +1,6 @@
+rust-playground/
+*.tgz
+**/mn418323/
 **/*.zip
-*.zip
 **/target/
 **/Cargo.lock
