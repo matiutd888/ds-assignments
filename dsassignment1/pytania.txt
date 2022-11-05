@@ -1,0 +1,19 @@
+AWAIT YIELDS
+1. Czym się różni executor futures od executora tokio.
+2. Popatrz na ten przyklad
+    let task3 = tokio::spawn(async {
+        println!("I am a new task.");
+        let dupa = tokio::spawn(async {
+            println!("I am a new task spawned by the new task.");
+        });
+        sleep(Duration::from_millis(500));
+        println!("I finished sleeping.");
+    });
+
+    Jeżeli używam zwykłej operacji blokującej (thread::sleep) to kolejność wykonania tego kodu to:
+    1. "I finished sleeping"
+    2. "I am new programmer spawned by the task
+
+    Jeżeli z kolei używam (tokio::sleep)  to jest ona asynchroniczna w tym sensie, że zrzeka się (yields)
+    i najpierw wykonuje się "I am new task spawned by the new task" a potem dopiero "I finished sleeping"
+3. 1:36 tego dziwnego filmiku - dlaczego było "GETS TO RUN IN THE DIFFERENT THREAD?"

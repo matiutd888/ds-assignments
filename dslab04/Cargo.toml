@@ -1,0 +1,12 @@
+[package]
+name = "lab-04"
+version = "0.2.0"
+authors = ["Filip Plata <fp371335@students.mimuw.edu.pl>", "Mateusz Banaszek <m.banaszek@mimuw.edu.pl"]
+edition = "2021"
+
+[dev-dependencies]
+tokio = { version = "1.21", features = ["full"] }
+async-channel = "1.7"
+async-trait = "0.1"
+reqwest = "0.11"
+futures = "0.3"
