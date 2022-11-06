@@ -163,6 +163,11 @@ impl<T: Module> ModuleRef<T> {
         let send_q = self.send_queue.clone();
         let should_stop = Arc::new(AtomicBool::new(false));
         let should_stop_clone = should_stop.clone();
+        if delay.is_zero() {
+            return TimerHandle {
+                should_stop: should_stop_clone;
+            }
+        }
         let mut interval = time::interval(delay);
         let is_system_running = self.is_running.clone();
         tokio::spawn(async move {
