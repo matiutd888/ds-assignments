@@ -1,14 +1,18 @@
 use std::marker::PhantomData;
+use std::process::Output;
 use std::sync::Mutex;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use ::futures::stream::FuturesUnordered;
 use async_channel::unbounded;
 use async_channel::Receiver;
 use async_channel::Sender;
-use tokio::sync::futures;
-use  futures::stream::FuturesUnordered;
-
+use futures::future::FusedFuture;
+use futures::select;
+use futures::Future;
+use futures::StreamExt;
+use tokio::time;
 
 pub trait Message: Send + 'static {}
 impl<T: Send + 'static> Message for T {}
@@ -51,13 +55,42 @@ impl<M: Message, T: Handler<M>> Handlee<T> for M {
 pub struct System {}
 
 impl System {
-    fn spawn_module_channel_reader<T: Module>(
+    async fn get_time_future<T: Module>(
+        m: Box<dyn Handlee<T>>,
+        time_duration: Duration,
+    ) -> (Duration, Box<dyn Handlee<T>>) {
+        let mut interval = time::interval(time_duration);
+        interval.tick().await;
+        (time_duration, m)
+    }
+
+    fn spawn_timer_sender<T: Module>(
+        time_duration_receiver: Receiver<(Duration, Box<dyn Handlee<T>>)>,
         sender: Sender<Box<dyn Handlee<T>>>,
-        receiver: Receiver<Box<dyn Handlee<T>>>,
-        timeDurationReceiver: Receiver<(Box<dyn Handlee<T>>, Duration)>,
-    ) -> JoinHandle<()> {
+    ) -> tokio::task::JoinHandle<()> {
+        return tokio::spawn(async {
+            let mut time_futures = FuturesUnordered::new();
+            loop {
+                select! {
+                    (duration, handlee) = time_duration_receiver.select_next_some() => {
+                        time_futures.push(System::get_time_future(handlee, duration));
+                    },
+                    (duration, handlee) = time_futures.select_next_some() => {
+                        time_futures.push(System::get_time_future(handlee, duration));
+                        sender.try_send(handlee).unwrap()
+
+                    }
+                }
+            }
+            ()
+        });
+    }
+
+    fn spawn_module_channel_reader<T: Module>(receiver: Receiver<Box<dyn Handlee<T>>>) -> () {
         tokio::spawn(async {
-            let timeFutures: FuturesUnordered;
+            loop {
+                select! {}
+            }
         });
     }
 
@@ -67,8 +100,7 @@ impl System {
     pub async fn register_module<T: Module>(&mut self, module: T) -> ModuleRef<T> {
         let (tx, rx) = unbounded::<Box<dyn Handlee<T>>>();
         let (timeSender, timeReceiver) = unbounded::<(Box<dyn Handlee<T>>, Duration)>();
-        
-        
+
         // TODO zastanowić się gdzie dać Arc<Mutex<Bool>> na is_finished.
         System::spawn_module_channel_reader(tx, rx, timeReceiver);
 
