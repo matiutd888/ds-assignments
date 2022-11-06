@@ -1,6 +1,7 @@
 use async_channel::unbounded;
 use async_channel::Receiver;
 use async_channel::Sender;
+use std::fmt;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -151,8 +152,6 @@ impl<T: Module> ModuleRef<T> {
         }
     }
 
-
-
     /// Schedules a message to be sent to the module periodically with the given interval.
     /// The first tick is sent after the interval elapses.
     /// Every call to this function results in sending new ticks and does not cancel
@@ -162,7 +161,8 @@ impl<T: Module> ModuleRef<T> {
         M: Message + Clone,
         T: Handler<M>,
     {
-        
+        println!("delay: as milis {:?}", delay.as_millis());
+
         let send_q = self.send_queue.clone();
         let should_stop = Arc::new(AtomicBool::new(false));
         let should_stop_clone = should_stop.clone();
@@ -170,15 +170,18 @@ impl<T: Module> ModuleRef<T> {
         let is_system_running = self.is_running.clone();
         // let new_msg = Box::new(message);
         tokio::spawn(async move {
+            interval.tick().await;
             loop {
-                if !is_system_running.load(Ordering::Relaxed) || should_stop.load(Ordering::Relaxed) {
+                if !is_system_running.load(Ordering::Relaxed) || should_stop.load(Ordering::Relaxed)
+                {
                     break;
                 }
                 interval.tick().await;
+                println!("Tick!");
                 let dupa = &message;
                 // https://blog.rust-lang.org/inside-rust/2019/10/11/AsyncAwait-Not-Send-Error-Improvements.html
                 let msg_clone = Box::new(dupa.clone());
-                send_q.clone().send_blocking(msg_clone).unwrap();
+                send_q.clone().try_send(msg_clone).unwrap();
             }
         });
         TimerHandle {

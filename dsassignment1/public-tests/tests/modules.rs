@@ -163,7 +163,7 @@ async fn second_tick_arrives_after_correct_interval() {
     .await;
     timeout_receiver.recv().await.unwrap();
     let elapsed = start_instant.elapsed();
-
+    println!("DUPA {:?}, {:?}", elapsed.as_millis(), timeout_interval.as_millis());
     assert!((elapsed.as_millis() as i128 - (timeout_interval.as_millis() * 2) as i128).abs() <= 1);
     sys.shutdown().await;
 }
