@@ -68,13 +68,13 @@ impl System {
                     break;
                 }
                 let handlee = receiver.recv().await.unwrap();
-                
-                let debug_elapsed = debug_start.elapsed();  
+
+                let debug_elapsed = debug_start.elapsed();
                 debug(&format!("Handlee received {:?}", debug_elapsed.as_millis())[..]);
 
                 let module_ref_clone = module_ref.clone();
                 handlee.get_handled(&module_ref_clone, &mut module).await;
-                debug(&format!("Handlee handled {:?}",debug_elapsed.as_millis())[..]);
+                debug(&format!("Handlee handled {:?}", debug_elapsed.as_millis())[..]);
             }
             ()
         })
@@ -168,23 +168,28 @@ impl<T: Module> ModuleRef<T> {
         tokio::spawn(async move {
             interval.tick().await;
             loop {
-                if !is_system_running.load(Ordering::Relaxed) || should_stop.load(Ordering::Relaxed) {
+                if !is_system_running.load(Ordering::Relaxed) || should_stop.load(Ordering::Relaxed)
+                {
                     break;
                 }
 
                 interval.tick().await;
                 debug("----------------------");
                 debug("Tick!");
-                
-                if !is_system_running.load(Ordering::Relaxed) || should_stop.load(Ordering::Relaxed) {
+
+                if !is_system_running.load(Ordering::Relaxed) || should_stop.load(Ordering::Relaxed)
+                {
                     break;
                 }
                 let message_ref = &message;
-                
+
                 // https://blog.rust-lang.org/inside-rust/2019/10/11/AsyncAwait-Not-Send-Error-Improvements.html
                 debug("Passing to send_queue");
-                
-                send_q.clone().try_send(Box::new(message_ref.clone())).unwrap();
+
+                send_q
+                    .clone()
+                    .try_send(Box::new(message_ref.clone()))
+                    .unwrap();
             }
         });
         TimerHandle {
