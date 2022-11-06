@@ -1,7 +1,6 @@
 use async_channel::unbounded;
 use async_channel::Receiver;
 use async_channel::Sender;
-use std::fmt;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -178,9 +177,9 @@ impl<T: Module> ModuleRef<T> {
                 }
                 interval.tick().await;
                 println!("Tick!");
-                let dupa = &message;
+                let message_ref = &message;
                 // https://blog.rust-lang.org/inside-rust/2019/10/11/AsyncAwait-Not-Send-Error-Improvements.html
-                let msg_clone = Box::new(dupa.clone());
+                let msg_clone = Box::new(message_ref.clone());
                 send_q.clone().try_send(msg_clone).unwrap();
             }
         });
