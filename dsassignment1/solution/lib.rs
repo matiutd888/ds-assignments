@@ -70,11 +70,11 @@ impl System {
                 let handlee = receiver.recv().await.unwrap();
                 let elapsed = start.elapsed();
                   
-                debug(format!("Handlee received {:?}", elapsed.as_millis()));
+                debug(&format!("Handlee received {:?}", elapsed.as_millis())[..]);
 
                 let module_ref_clone = module_ref.clone();
                 handlee.get_handled(&module_ref_clone, &mut module).await;
-                debug(format!("Handlee handled {:?}",elapsed.as_millis()));
+                debug(&format!("Handlee handled {:?}",elapsed.as_millis())[..]);
             }
             ()
         })
@@ -123,7 +123,7 @@ fn log(s: &str) {
     println!("{}", s);
 }
 
-fn debug(s: String) {
+fn debug(s: &str) {
     println!("{}", s);
 }
 
@@ -173,8 +173,8 @@ impl<T: Module> ModuleRef<T> {
                 }
 
                 interval.tick().await;
-                debug(format!("----------------------"));
-                debug(format!("Tick!"));
+                debug("----------------------");
+                debug("Tick!");
                 
                 if !is_system_running.load(Ordering::Relaxed) || should_stop.load(Ordering::Relaxed) {
                     break;
@@ -182,7 +182,7 @@ impl<T: Module> ModuleRef<T> {
                 let message_ref = &message;
                 
                 // https://blog.rust-lang.org/inside-rust/2019/10/11/AsyncAwait-Not-Send-Error-Improvements.html
-                debug(format!("Passing to send_queue"));
+                debug("Passing to send_queue");
                 
                 send_q.clone().try_send(Box::new(message_ref.clone())).unwrap();
             }

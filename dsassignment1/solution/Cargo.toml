@@ -14,3 +14,7 @@ log = { version = "0.4" }
 [lib]
 name = "assignment_1_solution"
 path = "lib.rs"
+
+[profile.test]
+opt-level = 3
+

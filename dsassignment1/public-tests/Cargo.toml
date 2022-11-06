@@ -12,3 +12,6 @@ async-channel = "1.7"
 
 [dev-dependencies]
 ntest = "0.8"
+
+[profile.test]
+opt-level = 3
