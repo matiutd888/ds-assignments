@@ -8,6 +8,8 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time;
 
+use std::time::Instant;
+
 pub trait Message: Send + 'static {}
 impl<T: Send + 'static> Message for T {}
 
@@ -60,29 +62,26 @@ impl System {
         receiver: Receiver<Box<dyn Handlee<T>>>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            let mut handlers: Vec<Option<JoinHandle<()>>> = vec![];
+            let start = Instant::now();
             loop {
                 if !is_running.load(Ordering::Relaxed) {
                     break;
                 }
                 let handlee = receiver.recv().await.unwrap();
+                let elapsed = start.elapsed();
+                  
+                debug(format!("Handlee received {:?}", elapsed.as_millis()));
 
                 let module_ref_clone = module_ref.clone();
-                // TODO W jaki sposób przekazywać moduł tym funkcjom?
-                // handlers.push(Some(tokio::spawn(async move {
-                //     handlee.get_handled(&module_ref_clone, &mut module);
-                //     ()
-                // })));
                 handlee.get_handled(&module_ref_clone, &mut module).await;
+                debug(format!("Handlee handled {:?}",elapsed.as_millis()));
             }
-            wait_for_all_handles(&mut handlers);
             ()
         })
     }
 
     /// Registers the module in the system.
     /// Returns a `ModuleRef`, which can be used then to send messages to the module.
-
     pub async fn register_module<T: Module>(&mut self, module: T) -> ModuleRef<T> {
         let (tx, rx) = unbounded::<Box<dyn Handlee<T>>>();
         let module_ref = ModuleRef {
@@ -114,20 +113,21 @@ impl System {
 }
 
 fn wait_for_all_handles(handlers: &mut Vec<Option<JoinHandle<()>>>) -> () {
-    // TODO czy da się to zrobić lepiej?
+    // TODO is there any other option to wait for all handles?
     for join_handle in handlers.iter_mut() {
         join_handle.take().map(|x| async { x.await });
     }
 }
 
-// 1. W jaki sposób
-
 fn log(s: &str) {
     println!("{}", s);
 }
 
+fn debug(s: String) {
+    println!("{}", s);
+}
+
 /// A reference to a module used for sending messages.
-// You can add fields to this struct.
 pub struct ModuleRef<T: Module + ?Sized> {
     is_running: Arc<AtomicBool>,
     send_queue: Sender<Box<dyn Handlee<T>>>,
@@ -143,8 +143,8 @@ impl<T: Module> ModuleRef<T> {
             log("Module is not running anymore");
             return;
         }
-        // (for example, if a handler was already running when System::shutdown()
-        // was called, calls to ModuleRef::send() in that handler must not panic)
+        // If a handler was already running when System::shutdown()
+        // was called, calls to ModuleRef::send() in that handler must not panic
         let result = self.send_queue.try_send(Box::new(msg));
         if result.is_err() {
             log("Error in send(), self.send_queue.try_send() failed!");
@@ -160,27 +160,31 @@ impl<T: Module> ModuleRef<T> {
         M: Message + Clone,
         T: Handler<M>,
     {
-        println!("delay: as milis {:?}", delay.as_millis());
-
         let send_q = self.send_queue.clone();
         let should_stop = Arc::new(AtomicBool::new(false));
         let should_stop_clone = should_stop.clone();
         let mut interval = time::interval(delay);
         let is_system_running = self.is_running.clone();
-        // let new_msg = Box::new(message);
         tokio::spawn(async move {
             interval.tick().await;
             loop {
-                if !is_system_running.load(Ordering::Relaxed) || should_stop.load(Ordering::Relaxed)
-                {
+                if !is_system_running.load(Ordering::Relaxed) || should_stop.load(Ordering::Relaxed) {
                     break;
                 }
+
                 interval.tick().await;
-                println!("Tick!");
+                debug(format!("----------------------"));
+                debug(format!("Tick!"));
+                
+                if !is_system_running.load(Ordering::Relaxed) || should_stop.load(Ordering::Relaxed) {
+                    break;
+                }
                 let message_ref = &message;
+                
                 // https://blog.rust-lang.org/inside-rust/2019/10/11/AsyncAwait-Not-Send-Error-Improvements.html
-                let msg_clone = Box::new(message_ref.clone());
-                send_q.clone().try_send(msg_clone).unwrap();
+                debug(format!("Passing to send_queue"));
+                
+                send_q.clone().try_send(Box::new(message_ref.clone())).unwrap();
             }
         });
         TimerHandle {

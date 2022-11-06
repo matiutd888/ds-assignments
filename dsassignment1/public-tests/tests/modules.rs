@@ -153,17 +153,21 @@ async fn second_tick_arrives_after_correct_interval() {
     let timeout_interval = Duration::from_millis(50);
 
     let start_instant = Instant::now();
-    set_timer(
+    let timer = set_timer(
         &mut sys,
         Box::pin(async move {
+            println!("Sending to timeout_receiver");
             timeout_sender.send(Timeout).await.unwrap();
         }),
         timeout_interval,
     )
     .await;
+    println!("will try to recv");
     timeout_receiver.recv().await.unwrap();
+    
     let elapsed = start_instant.elapsed();
-    println!("DUPA {:?}, {:?}", elapsed.as_millis(), timeout_interval.as_millis());
+   
+    println!("elapsed: {:?},timeout_interval: {:?}", elapsed.as_millis(), timeout_interval.as_millis());
     assert!((elapsed.as_millis() as i128 - (timeout_interval.as_millis() * 2) as i128).abs() <= 1);
     sys.shutdown().await;
 }
@@ -205,6 +209,7 @@ struct Counter {
 #[async_trait::async_trait]
 impl Handler<Tick> for Counter {
     async fn handle(&mut self, _self_ref: &ModuleRef<Self>, _msg: Tick) {
+        println!("Sending number!: {}", self.num);
         self.num_sender.send(self.num).await.unwrap();
         self.num += 1;
     }
