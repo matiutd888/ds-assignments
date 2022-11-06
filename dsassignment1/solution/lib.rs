@@ -186,10 +186,7 @@ impl<T: Module> ModuleRef<T> {
                 // https://blog.rust-lang.org/inside-rust/2019/10/11/AsyncAwait-Not-Send-Error-Improvements.html
                 debug("Passing to send_queue");
 
-                send_q
-                    .clone()
-                    .try_send(Box::new(message_ref.clone()))
-                    .unwrap();
+                send_q.try_send(Box::new(message_ref.clone())).unwrap();
             }
         });
         TimerHandle {

@@ -153,7 +153,7 @@ async fn second_tick_arrives_after_correct_interval() {
     let timeout_interval = Duration::from_millis(50);
 
     let start_instant = Instant::now();
-    let timer = set_timer(
+    set_timer(
         &mut sys,
         Box::pin(async move {
             println!("Sending to timeout_receiver");
