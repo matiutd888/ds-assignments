@@ -82,7 +82,7 @@ async fn initialize_system(sys: &mut System) -> Receiver<String> {
     log_receiver
 }
 
-#[tokio::test]
+#[tokio::   test]
 #[timeout(300)]
 async fn ping_pong_runs_correctly() {
     let mut sys = System::new().await;

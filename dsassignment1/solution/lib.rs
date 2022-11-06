@@ -1,17 +1,12 @@
-use std::marker::PhantomData;
-use std::process::Output;
-use std::sync::Mutex;
-use std::thread::JoinHandle;
+use std::slice::Join;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
-
-use ::futures::stream::FuturesUnordered;
 use async_channel::unbounded;
 use async_channel::Receiver;
 use async_channel::Sender;
-use futures::future::FusedFuture;
-use futures::select;
-use futures::Future;
-use futures::StreamExt;
+use tokio::task::JoinHandle;
 use tokio::time;
 
 pub trait Message: Send + 'static {}
@@ -29,13 +24,19 @@ pub trait Handler<M: Message>: Module {
 
 /// A handle returned by `ModuleRef::request_tick()`, can be used to stop sending further ticks.
 // You can add fields to this struct
-pub struct TimerHandle {}
+pub struct TimerHandle {
+    is_system_running: Arc<AtomicBool>,
+    should_stop: Arc<AtomicBool>
+}
 
 impl TimerHandle {
     /// Stops the sending of ticks resulting from the corresponding call to `ModuleRef::request_tick()`.
     /// If the ticks are already stopped, does nothing.
     pub async fn stop(&self) {
-        unimplemented!()
+        if !self.is_system_running.load(Ordering::Relaxed) {
+            return;
+        }
+        self.should_stop.store(true, Ordering::Acquire);
     }
 }
 
@@ -52,7 +53,10 @@ impl<M: Message, T: Handler<M>> Handlee<T> for M {
 }
 
 // You can add fields to this struct.
-pub struct System {}
+pub struct System {
+    is_running:  Arc<AtomicBool>,
+    join_handles: Vec<Option<JoinHandle<()>>>
+}
 
 impl System {
     async fn get_time_future<T: Module>(
@@ -64,34 +68,23 @@ impl System {
         (time_duration, m)
     }
 
-    fn spawn_timer_sender<T: Module>(
-        time_duration_receiver: Receiver<(Duration, Box<dyn Handlee<T>>)>,
-        sender: Sender<Box<dyn Handlee<T>>>,
-    ) -> tokio::task::JoinHandle<()> {
-        return tokio::spawn(async {
-            let mut time_futures = FuturesUnordered::new();
-            loop {
-                select! {
-                    (duration, handlee) = time_duration_receiver.select_next_some() => {
-                        time_futures.push(System::get_time_future(handlee, duration));
-                    },
-                    (duration, handlee) = time_futures.select_next_some() => {
-                        time_futures.push(System::get_time_future(handlee, duration));
-                        sender.try_send(handlee).unwrap()
-
-                    }
-                }
-            }
-            ()
-        });
-    }
-
-    fn spawn_module_channel_reader<T: Module>(receiver: Receiver<Box<dyn Handlee<T>>>) -> () {
+    fn spawn_module_channel_reader<T: Module>(is_running: Arc<AtomicBool>, module: T, module_ref: ModuleRef<T>, receiver: Receiver<Box<dyn Handlee<T>>>) -> JoinHandle<()> {
         tokio::spawn(async {
+            let handlers: Vec<Option<JoinHandle<()>>> = vec![];
+            
             loop {
-                select! {}
+                if !is_running.load(Ordering::Relaxed) {
+                    break;
+                }
+                let handlee = receiver.recv().await.unwrap();
+                handlers.push(Some(tokio::spawn(async {
+                        handlee.get_handled(&module_ref, &mut module);
+                        ()
+                    }
+                )));
             }
-        });
+            wait_for_all_handles(&mut handlers);
+        })
     }
 
     /// Registers the module in the system.
@@ -99,47 +92,46 @@ impl System {
 
     pub async fn register_module<T: Module>(&mut self, module: T) -> ModuleRef<T> {
         let (tx, rx) = unbounded::<Box<dyn Handlee<T>>>();
-        let (timeSender, timeReceiver) = unbounded::<(Box<dyn Handlee<T>>, Duration)>();
-
-        // TODO zastanowić się gdzie dać Arc<Mutex<Bool>> na is_finished.
-        System::spawn_module_channel_reader(tx, rx, timeReceiver);
-
-        // 1. Stwórz dla modułu aync receive channel i send channel
-        // 2. zespawnuj taska dla receive kolejki, który będzie miał jednego wielkiego selecta
-        // 2a) Dla każdego timera
-        // Ticks requested by System::request_tick()
-        // must be delivered at specified time intervals.
-        // 2b) dla skończenia normalnego taska z kolejki
-        // MessageRef ma klona send cześći kanału. Potrzeba na to mieć jakieś Arc z mutexem zapewne
-        unimplemented!()
+        let module_ref = ModuleRef {
+            is_running: self.is_running.clone(),
+            send_queue: tx.clone()
+        };
+        self.join_handles.push(Some(System::spawn_module_channel_reader(self.is_running.clone(), module, module_ref.clone(), rx)));
+        module_ref
     }
 
     /// Creates and starts a new instance of the system.
-    pub async fn new() -> Self {}
+    pub async fn new() -> Self {
+        System {
+            is_running: Arc::new(AtomicBool::new(true)),
+            join_handles: vec![]
+        }
+    }
 
-    /// Gracefully shuts the system down.
-    ///
-    /// Shutting the system down gracefully (System::shutdown()).
-    /// The shutdown should wait for all already started handlers to finish and for
-    /// all registered modules to be dropped.
-    /// It should not wait for all enqueued messages to be handled.
-    /// It does not have to wait for all Tokio tasks to finish, but it must cause all of them to finish (for example, it is acceptable if a task handling ModuleRef::request_tick() finishes an interval after the shutdown).
-    // It is undefined what happens when the system is used after shutdown. However, you must ensure that a shutdown will not cause any panics in handlers or Tokio tasks (for example, if a handler was already running when System::shutdown() was called, calls to ModuleRef::send() in that handler must not panic).
     pub async fn shutdown(&mut self) {
-        unimplemented!()
+        self.is_running.store(false, Ordering::Acquire);
+        wait_for_all_handles(&mut self.join_handles);
+    }
+}
+
+fn wait_for_all_handles(handlers: &mut Vec<Option<JoinHandle<()>>>) -> () {
+    // TODO czy da się to zrobić lepiej?
+    for join_handle in handlers.iter_mut() {
+        join_handle.take().map(|x|async {x.await});
     }
 }
 
 // 1. W jaki sposób
 
+fn log(s: &str) {
+    println!("{}", s);
+}
+
 /// A reference to a module used for sending messages.
 // You can add fields to this struct.
 pub struct ModuleRef<T: Module + ?Sized> {
-    // A dummy marker to satisfy the compiler. It can be removed if type T is
-    // used in some other field.
-    // Arc<Mutex> because timer can also send messabes to the queue
+    is_running: Arc<AtomicBool>,
     send_queue: Sender<Box<dyn Handlee<T>>>,
-    // Tutaj jakoś trzeba mechanizm który pozwoli
 }
 
 impl<T: Module> ModuleRef<T> {
@@ -148,8 +140,16 @@ impl<T: Module> ModuleRef<T> {
     where
         T: Handler<M>,
     {
-        // TODO tutaj być może trzeba dodać jakieś sprawdzenie flagi czy moduł się skończył
-        self.send_queue.try_send(Box::new(msg)).unwrap();
+        if !self.is_running.load(Ordering::Relaxed) {
+            log("Module is not running anymore");
+            return ;
+        }
+        // (for example, if a handler was already running when System::shutdown() 
+        // was called, calls to ModuleRef::send() in that handler must not panic)
+        let result = self.send_queue.try_send(Box::new(msg));
+        if result.is_err() {
+            log("Error in send(), self.send_queue.try_send() failed!");
+        }
     }
 
     /// Schedules a message to be sent to the module periodically with the given interval.
@@ -160,14 +160,32 @@ impl<T: Module> ModuleRef<T> {
     where
         M: Message + Clone,
         T: Handler<M>,
-    {
-        unimplemented!()
+    {  
+        let send_q = self.send_queue.clone()
+        let should_stop = Arc::new(AtomicBool::new(false));
+        let should_stop_clone = should_stop.clone();
+        let mut interval = time::interval(delay);
+        tokio::spawn(async move {
+            loop {
+                if should_stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                interval.tick().await;
+                send_q.send(Box::new(message.clone()));
+            }
+        });
+        TimerHandle {
+            is_system_running: self.is_running.clone(),
+            should_stop: should_stop_clone
+        }
     }
 }
 
 impl<T: Module> Clone for ModuleRef<T> {
     /// Creates a new reference to the same module.
     fn clone(&self) -> Self {
-        unimplemented!()
+        ModuleRef { 
+            is_running: self.is_running.clone(),
+            send_queue: self.send_queue.clone() }   
     }
 }
