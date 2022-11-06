@@ -165,8 +165,8 @@ impl<T: Module> ModuleRef<T> {
         let should_stop_clone = should_stop.clone();
         if delay.is_zero() {
             return TimerHandle {
-                should_stop: should_stop_clone;
-            }
+                should_stop: should_stop_clone,
+            };
         }
         let mut interval = time::interval(delay);
         let is_system_running = self.is_running.clone();

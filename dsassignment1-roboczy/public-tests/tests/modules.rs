@@ -82,7 +82,7 @@ async fn initialize_system(sys: &mut System) -> Receiver<String> {
     log_receiver
 }
 
-#[tokio::   test]
+#[tokio::test]
 #[timeout(300)]
 async fn ping_pong_runs_correctly() {
     let mut sys = System::new().await;
@@ -164,10 +164,14 @@ async fn second_tick_arrives_after_correct_interval() {
     .await;
     println!("will try to recv");
     timeout_receiver.recv().await.unwrap();
-    
+
     let elapsed = start_instant.elapsed();
-   
-    println!("elapsed: {:?},timeout_interval: {:?}", elapsed.as_millis(), timeout_interval.as_millis());
+
+    println!(
+        "elapsed: {:?},timeout_interval: {:?}",
+        elapsed.as_millis(),
+        timeout_interval.as_millis()
+    );
     assert!((elapsed.as_millis() as i128 - (timeout_interval.as_millis() * 2) as i128).abs() <= 1);
     sys.shutdown().await;
 }
