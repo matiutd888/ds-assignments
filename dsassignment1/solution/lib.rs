@@ -62,19 +62,19 @@ impl System {
         receiver: Receiver<Box<dyn Handlee<T>>>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            let start = Instant::now();
+            let debug_start = Instant::now();
             loop {
                 if !is_running.load(Ordering::Relaxed) {
                     break;
                 }
                 let handlee = receiver.recv().await.unwrap();
-                let elapsed = start.elapsed();
-                  
-                debug(&format!("Handlee received {:?}", elapsed.as_millis())[..]);
+                
+                let debug_elapsed = debug_start.elapsed();  
+                debug(&format!("Handlee received {:?}", debug_elapsed.as_millis())[..]);
 
                 let module_ref_clone = module_ref.clone();
                 handlee.get_handled(&module_ref_clone, &mut module).await;
-                debug(&format!("Handlee handled {:?}",elapsed.as_millis())[..]);
+                debug(&format!("Handlee handled {:?}",debug_elapsed.as_millis())[..]);
             }
             ()
         })
