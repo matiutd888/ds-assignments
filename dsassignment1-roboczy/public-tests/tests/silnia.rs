@@ -262,3 +262,22 @@ async fn must_be_printed_ticks_are_stopped_on_shutdown() {
     // Testing if second stop crashes program
     timer_handle.stop().await;
 }
+
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[timeout(500)]
+async fn doesnt_panic_when_senders_are_closed() {
+    let mut system = System::new().await;
+    let (num_sender, _r) = unbounded();
+    let counter_ref = system.register_module(Counter { num: 0, num_sender }).await;
+
+    let _timer_handle = counter_ref
+        .request_tick(Tick, Duration::from_millis(50))
+        .await;
+    
+    tokio::time::sleep(Duration::from_millis(170)).await;
+
+    drop(counter_ref);
+    system.shutdown().await;
+    drop(system);
+}

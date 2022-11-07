@@ -67,6 +67,7 @@ impl System {
                 if !is_running.load(Ordering::Relaxed) {
                     break;
                 }
+                // Will never return error as we've got control over one sender. 
                 let handlee = receiver.recv().await.unwrap();
 
                 let debug_elapsed = debug_start.elapsed();
