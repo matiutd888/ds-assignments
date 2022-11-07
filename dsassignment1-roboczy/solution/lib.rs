@@ -76,6 +76,7 @@ impl System {
                 handlee.get_handled(&module_ref_clone, &mut module).await;
                 debug(&format!("Handlee handled {:?}", debug_elapsed.as_millis())[..]);
             }
+            debug("reader task ending!");
         })
     }
 
@@ -122,7 +123,7 @@ fn log(s: &str) {
 }
 
 fn debug(_s: &str) {
-    // println!("{}", s);
+    println!("{}", _s);
 }
 
 /// A reference to a module used for sending messages.
@@ -145,7 +146,7 @@ impl<T: Module> ModuleRef<T> {
         // was called, calls to ModuleRef::send() in that handler must not panic
         let result = self.send_queue.try_send(Box::new(msg));
         if result.is_err() {
-            log("Error in send(), self.send_queue.try_send() failed!");
+            log("Error in send(), try_send failed!");
         }
     }
 
@@ -196,8 +197,12 @@ impl<T: Module> ModuleRef<T> {
                     break;
                 }
                 debug("Passing to send_queue");
-                send_q.try_send(Box::new((&message).clone())).unwrap();
+                let result = send_q.try_send(Box::new((&message).clone()));
+                if result.is_err() {
+                    log("Error in timer task sending message to queue");
+                }
             }
+            debug("Timer task ending");
         });
         return ret;
     }

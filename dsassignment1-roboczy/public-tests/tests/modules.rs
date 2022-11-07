@@ -82,7 +82,7 @@ async fn initialize_system(sys: &mut System) -> Receiver<String> {
     log_receiver
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 #[timeout(300)]
 async fn ping_pong_runs_correctly() {
     let mut sys = System::new().await;
@@ -145,7 +145,7 @@ async fn set_timer(
     timer
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 #[timeout(300)]
 async fn second_tick_arrives_after_correct_interval() {
     let mut sys = System::new().await;
@@ -191,7 +191,7 @@ impl Handler<u8> for CountToFive {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 #[timeout(300)]
 async fn self_ref_works() {
     let mut system = System::new().await;
@@ -219,7 +219,7 @@ impl Handler<Tick> for Counter {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 #[timeout(500)]
 async fn stopping_ticks_works() {
     let mut system = System::new().await;
@@ -240,4 +240,7 @@ async fn stopping_ticks_works() {
     assert_eq!(received_numbers, vec![0, 1, 2]);
 
     system.shutdown().await;
+    drop(system);
+    // Testing if second stop crashes program
+    timer_handle.stop().await;
 }
