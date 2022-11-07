@@ -33,7 +33,7 @@ impl TimerHandle {
     /// Stops the sending of ticks resulting from the corresponding call to `ModuleRef::request_tick()`.
     /// If the ticks are already stopped, does nothing.
     pub async fn stop(&self) {
-        self.should_stop.store(true, Ordering::Release);
+        self.should_stop.store(true, Ordering::Relaxed);
     }
 }
 
@@ -112,14 +112,13 @@ impl System {
 }
 
 fn wait_for_all_handles(handlers: &mut Vec<Option<JoinHandle<()>>>) {
-    // TODO is there any other option to wait for all handles?
     for join_handle in handlers.iter_mut() {
         join_handle.take().map(|x| async { x.await });
     }
 }
 
 fn log(s: &str) {
-    println!("{}", s);
+    eprintln!("{}", s);
 }
 
 fn debug(_s: &str) {
@@ -159,21 +158,33 @@ impl<T: Module> ModuleRef<T> {
         M: Message + Clone,
         T: Handler<M>,
     {
-        let send_q = self.send_queue.clone();
         let should_stop = Arc::new(AtomicBool::new(false));
         let should_stop_clone = should_stop.clone();
+        let ret = TimerHandle {
+            should_stop: should_stop_clone,
+        };
         if delay.is_zero() {
-            return TimerHandle {
-                should_stop: should_stop_clone,
-            };
+            log("Delay is cannot be zero");
+            return ret;
         }
+        if !self.is_running.load(Ordering::Relaxed) {
+            log("System already ended");
+            return ret;
+        }
+
+        let send_q = self.send_queue.clone();
+
         let mut interval = time::interval(delay);
         let is_system_running = self.is_running.clone();
         tokio::spawn(async move {
             interval.tick().await;
             loop {
-                if !is_system_running.load(Ordering::Relaxed) || should_stop.load(Ordering::Relaxed)
-                {
+                let should_loop_stop = || {
+                    !is_system_running.load(Ordering::Relaxed)
+                        || should_stop.load(Ordering::Relaxed)
+                };
+                
+                if should_loop_stop() {
                     break;
                 }
 
@@ -181,21 +192,14 @@ impl<T: Module> ModuleRef<T> {
                 debug("----------------------");
                 debug("Tick!");
 
-                if !is_system_running.load(Ordering::Relaxed) || should_stop.load(Ordering::Relaxed)
-                {
+                if should_loop_stop() {
                     break;
                 }
-                let message_ref = &message;
-
-                // https://blog.rust-lang.org/inside-rust/2019/10/11/AsyncAwait-Not-Send-Error-Improvements.html
                 debug("Passing to send_queue");
-
-                send_q.try_send(Box::new(message_ref.clone())).unwrap();
+                send_q.try_send(Box::new((&message).clone())).unwrap();
             }
         });
-        TimerHandle {
-            should_stop: should_stop_clone,
-        }
+        return ret;
     }
 }
 
