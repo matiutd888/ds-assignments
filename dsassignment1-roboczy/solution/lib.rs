@@ -76,7 +76,6 @@ impl System {
                 handlee.get_handled(&module_ref_clone, &mut module).await;
                 debug(&format!("Handlee handled {:?}", debug_elapsed.as_millis())[..]);
             }
-            ()
         })
     }
 
@@ -112,7 +111,7 @@ impl System {
     }
 }
 
-fn wait_for_all_handles(handlers: &mut Vec<Option<JoinHandle<()>>>) -> () {
+fn wait_for_all_handles(handlers: &mut Vec<Option<JoinHandle<()>>>) {
     // TODO is there any other option to wait for all handles?
     for join_handle in handlers.iter_mut() {
         join_handle.take().map(|x| async { x.await });
@@ -123,8 +122,8 @@ fn log(s: &str) {
     println!("{}", s);
 }
 
-fn debug(s: &str) {
-    println!("{}", s);
+fn debug(_s: &str) {
+    // println!("{}", s);
 }
 
 /// A reference to a module used for sending messages.
