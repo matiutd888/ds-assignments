@@ -9,6 +9,7 @@ assignment-1-solution = { path = "../solution" }
 async-trait = "0.1"
 tokio = {version = "1.21", features = ["full"] }
 async-channel = "1.7"
+rand = "0.8.5"
 
 [dev-dependencies]
 ntest = "0.8"
