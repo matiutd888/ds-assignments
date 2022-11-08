@@ -218,13 +218,14 @@ async fn doesnt_wait_for_queue_to_empty() {
     counter_ref.send(Tick).await;
 
     tokio::time::sleep(Duration::from_millis(170)).await;
+    println!("Stopping!");
     system.shutdown().await;
 
     let mut received_numbers = Vec::new();
     while let Ok(num) = num_receiver.try_recv() {
         received_numbers.push(num);
     }
-    assert_eq!(received_numbers, vec![0, 1, 2]);
+    assert_eq!(received_numbers, vec![0, 1, 2, 3]);
 
     drop(system);
 }
