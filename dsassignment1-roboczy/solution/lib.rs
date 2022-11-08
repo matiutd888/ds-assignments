@@ -75,7 +75,7 @@ impl System {
                 select! {
                     Ok(_) = stop_receiver.recv() => {
                         // Successfully received StopMessage.
-                        // If recv() returned Err it would mean that system dropped without a shutdown. 
+                        // If recv() returned Err it would mean that system dropped without a shutdown.
                         // We let the tasks run in that case.
                         break;
                     }
@@ -195,7 +195,6 @@ impl<T: Module> ModuleRef<T> {
             interval.tick().await;
             loop {
                 if !is_running.load(Ordering::Acquire) {
-                    log("System shut down, ending ticks");
                     break;
                 }
                 select! {
@@ -206,6 +205,7 @@ impl<T: Module> ModuleRef<T> {
                         let result = send_q.try_send(Box::new((&message).clone()));
                         if result.is_err() {
                             // If send failed it means the receiver queue was dropped -> system shut down.
+                            // It means it's best to end the tasks.
                             break;
                         }
                     }
