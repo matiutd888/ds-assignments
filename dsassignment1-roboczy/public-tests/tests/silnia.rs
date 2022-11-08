@@ -263,7 +263,6 @@ async fn must_be_printed_ticks_are_stopped_on_shutdown() {
     timer_handle.stop().await;
 }
 
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 #[timeout(500)]
 async fn doesnt_panic_when_senders_are_closed() {

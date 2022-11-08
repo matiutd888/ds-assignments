@@ -10,8 +10,6 @@ use tokio::select;
 use tokio::task::JoinHandle;
 use tokio::time;
 
-use std::time::Instant;
-
 pub trait Message: Send + 'static {}
 impl<T: Send + 'static> Message for T {}
 
@@ -56,7 +54,7 @@ struct StopMessage;
 // #[async_trait::async_trait]
 // impl Stop
 pub struct System {
-    is_running: Arc<AtomicBool>,
+    is_running: Arc<AtomicBool>, // This flag is somewhat unnecessary, but let's add it for faster stopping.
     reader_stop_senders: Vec<Sender<StopMessage>>,
     join_handles: Vec<Option<JoinHandle<()>>>,
 }
@@ -71,7 +69,7 @@ impl System {
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             loop {
-                if !is_running.load(Ordering::Relaxed) {
+                if !is_running.load(Ordering::Acquire) {
                     break;
                 }
                 select! {
@@ -124,7 +122,7 @@ impl System {
     }
 
     pub async fn shutdown(&mut self) {
-        self.is_running.store(false, Ordering::Relaxed);
+        self.is_running.store(false, Ordering::Release);
         send_stop_messages(&self.reader_stop_senders).await;
         wait_for_all_handles(&mut self.join_handles).await;
     }
@@ -181,7 +179,7 @@ impl<T: Module> ModuleRef<T> {
             log("Delay is cannot be zero");
             return ret;
         }
-        if !self.is_running.load(Ordering::Relaxed) {
+        if !self.is_running.load(Ordering::Acquire) {
             log("System already finished");
             return ret;
         }
@@ -193,7 +191,7 @@ impl<T: Module> ModuleRef<T> {
         tokio::spawn(async move {
             interval.tick().await;
             loop {
-                if !is_running.load(Ordering::Relaxed) {
+                if !is_running.load(Ordering::Acquire) {
                     log("System shut down, ending ticks");
                     break;
                 }
