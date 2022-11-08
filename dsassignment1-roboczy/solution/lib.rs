@@ -51,8 +51,6 @@ impl<M: Message, T: Handler<M>> Handlee<T> for M {
 
 struct StopMessage;
 
-// #[async_trait::async_trait]
-// impl Stop
 pub struct System {
     is_running: Arc<AtomicBool>, // This flag is somewhat unnecessary, but let's add it for faster stopping.
     reader_stop_senders: Vec<Sender<StopMessage>>,
