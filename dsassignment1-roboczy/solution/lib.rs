@@ -54,7 +54,7 @@ struct StopMessage;
 pub struct System {
     is_running: Arc<AtomicBool>, // This flag is somewhat unnecessary, but let's add it for faster stopping.
     reader_stop_senders: Vec<Sender<StopMessage>>,
-    join_handles: Vec<Option<JoinHandle<()>>>,
+    join_handles: Vec<JoinHandle<()>>,
 }
 
 impl System {
@@ -103,13 +103,13 @@ impl System {
         let (stop_sender, stop_receiver) = unbounded();
         self.reader_stop_senders.push(stop_sender);
         self.join_handles
-            .push(Some(System::spawn_module_channel_reader(
+            .push(System::spawn_module_channel_reader(
                 stop_receiver,
                 module,
                 module_ref.clone(),
                 rx,
                 self.is_running.clone(),
-            )));
+            ));
         module_ref
     }
 
@@ -129,9 +129,9 @@ impl System {
     }
 }
 
-async fn wait_for_all_handles(handlers: &mut Vec<Option<JoinHandle<()>>>) {
+async fn wait_for_all_handles(handlers: &mut Vec<JoinHandle<()>>) {
     for join_handle in handlers.iter_mut() {
-        join_handle.take().map(|x| async { x.await });
+        _ = join_handle.await;
     }
 }
 
