@@ -123,8 +123,10 @@ impl Timer {
 impl Handler<Tick> for Timer {
     async fn handle(&mut self, _self_ref: &ModuleRef<Self>, _msg: Tick) {
         if !self.first_tick_received {
+            println!("First tick received");
             self.first_tick_received = true;
         } else {
+            
             match self.timeout_callback.take() {
                 Some(callback) => callback.await,
                 None => (),
@@ -140,7 +142,9 @@ async fn set_timer(
     timeout_callback: Pin<Box<dyn Future<Output = ()> + Send>>,
     duration: Duration,
 ) -> ModuleRef<Timer> {
+    println!("SETTING TIMER");
     let timer = system.register_module(Timer::new(timeout_callback)).await;
+    println!("Requesting tick");
     timer.request_tick(Tick, duration).await;
     timer
 }
