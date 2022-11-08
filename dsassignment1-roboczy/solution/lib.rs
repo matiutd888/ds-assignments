@@ -35,7 +35,6 @@ impl TimerHandle {
     /// Stops the sending of ticks resulting from the corresponding call to `ModuleRef::request_tick()`.
     /// If the ticks are already stopped, does nothing.
     pub async fn stop(&self) {
-        debug("Timer handle - stop!");
         _ = self.timer_stop_sender.send(StopMessage).await;
     }
 }
@@ -71,7 +70,6 @@ impl System {
         is_running: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            let debug_start = Instant::now();
             loop {
                 if !is_running.load(Ordering::Relaxed) {
                     break;
@@ -82,20 +80,16 @@ impl System {
                     }
                     message_result = message_receiver.recv() => {
                         if let Ok(handlee) = message_result {
-                            let debug_elapsed = debug_start.elapsed();
-                            debug(&format!("Handlee received {:?}", debug_elapsed.as_millis())[..]);
                             let module_ref_clone = module_ref.clone();
                             handlee.get_handled(&module_ref_clone, &mut module).await;
-                            debug(&format!("Handlee handled {:?}", debug_elapsed.as_millis())[..]);
                         } else {
                             // Will never return error as we've got control over one sender
-                            log("Error receiving message - receiver channel closed.");
+                            log("Error receiving message - receiver channel closed");
                             break;
                         }
                     }
                 }
             }
-            debug("reader task ending!");
         })
     }
 
@@ -152,10 +146,6 @@ fn log(s: &str) {
     eprintln!("{}", s);
 }
 
-fn debug(_s: &str) {
-    println!("{}", _s);
-}
-
 /// A reference to a module used for sending messages.
 pub struct ModuleRef<T: Module + ?Sized> {
     is_running: Arc<AtomicBool>,
@@ -172,7 +162,7 @@ impl<T: Module> ModuleRef<T> {
         // was called, calls to ModuleRef::send() in that handler must not panic
         let result = self.send_queue.try_send(Box::new(msg));
         if result.is_err() {
-            log("Error in send(), try_send failed!");
+            log("Error in send(), try_send failed");
         }
     }
 
@@ -209,7 +199,6 @@ impl<T: Module> ModuleRef<T> {
                 }
                 select! {
                     Ok(_) = timer_stop_receiver.recv() => {
-                        debug("Stopping timer");
                         break;
                     }
                     _ = interval.tick() => {
