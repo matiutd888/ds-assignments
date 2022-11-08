@@ -73,7 +73,10 @@ impl System {
                     break;
                 }
                 select! {
-                    _ = stop_receiver.recv() => {
+                    Ok(_) = stop_receiver.recv() => {
+                        // Successfully received StopMessage.
+                        // If recv() returned Err it would mean that system dropped without a shutdown. 
+                        // We let the tasks run in that case.
                         break;
                     }
                     message_result = message_receiver.recv() => {
