@@ -38,8 +38,6 @@ impl<L: Read + Write> SecureClient<L> {
             .with_root_certificates(root_store)
             .with_no_client_auth();
 
-        // Create a TLS connection using the configuration prepared above.
-        // "localhost" is the name of the remote server:
         let connection =
             ClientConnection::new(Arc::new(client_config), "localhost".try_into().unwrap())
                 .unwrap();
