@@ -11,12 +11,12 @@ use std::sync::Arc;
 use rustls::{ClientConnection, RootCertStore, ServerConnection, StreamOwned};
 
 pub struct SecureClient<L: Read + Write> {
-    streamowned: StreamOwned<ClientConnection, L>,
+    stream: StreamOwned<ClientConnection, L>,
     hmac_key: Vec<u8>,
 }
 
 pub struct SecureServer<L: Read + Write> {
-    streamowned: StreamOwned<ServerConnection, L>,
+    stream: StreamOwned<ServerConnection, L>,
     hmac_key: Vec<u8>,
 }
 
@@ -46,7 +46,7 @@ impl<L: Read + Write> SecureClient<L> {
             rustls::StreamOwned::new(connection, link);
         let hmac_vec: Vec<u8> = hmac_key.to_vec();
         SecureClient {
-            streamowned: streamowned,
+            stream: streamowned,
             hmac_key: hmac_vec,
         }
     }
@@ -69,11 +69,11 @@ impl<L: Read + Write> SecureClient<L> {
     pub fn send_msg(&mut self, data: Vec<u8>) {
         let length_in_network_bytes: [u8; 4] = (data.len() as u32).to_be_bytes();
         let hmac_tag = Self::calculate_hmac_tag(&data, &self.hmac_key);
-        self.streamowned
+        self.stream
             .write_all(&length_in_network_bytes)
             .unwrap();
-        self.streamowned.write_all(&data).unwrap();
-        self.streamowned.write_all(&hmac_tag).unwrap();
+        self.stream.write_all(&data).unwrap();
+        self.stream.write_all(&hmac_tag).unwrap();
     }
 }
 
@@ -116,7 +116,7 @@ impl<L: Read + Write> SecureServer<L> {
         let connection = rustls::ServerConnection::new(Arc::new(server_config)).unwrap();
 
         SecureServer {
-            streamowned: StreamOwned::new(connection, link),
+            stream: StreamOwned::new(connection, link),
             hmac_key: hmac_key.to_vec(),
         }
     }
@@ -137,16 +137,16 @@ impl<L: Read + Write> SecureServer<L> {
     /// message's HMAC tag is correct. Otherwise returns `SecureServerError`.
     pub fn recv_message(&mut self) -> Result<Vec<u8>, SecureServerError> {
         let mut length_bytes: [u8; 4] = [0; 4];
-        self.streamowned.read_exact(length_bytes.as_mut()).unwrap();
+        self.stream.read_exact(length_bytes.as_mut()).unwrap();
 
         let length = u32::from_be_bytes(length_bytes);
 
         let mut message_bytes: Vec<u8> = vec![0; length as usize];
 
-        self.streamowned.read_exact(message_bytes.as_mut()).unwrap();
+        self.stream.read_exact(message_bytes.as_mut()).unwrap();
 
         let mut hmac_bytes: [u8; 32] = [0; 32];
-        self.streamowned.read_exact(hmac_bytes.as_mut()).unwrap();
+        self.stream.read_exact(hmac_bytes.as_mut()).unwrap();
         if Self::verify_hmac_tag(&hmac_bytes, &message_bytes, &self.hmac_key) {
             Ok(message_bytes.to_vec())
         } else {
