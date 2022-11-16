@@ -1,0 +1,2 @@
+1. Jeżeli mamy operację blokującą, trzeba ZAWSZE pomyśleć 
+czy jest możliwe, że zostaniemy na niej zablokowani!
