@@ -126,12 +126,11 @@ impl StableStorage for StableStorageImpl {
             return None;
         }
         let key_path = self.append_to_path(Self::encode(key));
-
-        let result = fs::read(key_path).await;
-        if result.is_err() {
+        if !Path::new(&key_path).exists() {
             return None;
         }
-        return Some(result.unwrap());
+        let result = fs::read(key_path).await.unwrap();
+        return Some(result);
     }
 
     async fn remove(&mut self, key: &str) -> bool {
