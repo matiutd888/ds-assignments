@@ -4,9 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 use tokio::{
-    fs::{rename, File, self},
-    io::{AsyncWriteExt, AsyncReadExt},
-    sync::Mutex,
+    fs::{self, rename, File},
+    io::AsyncWriteExt,
 };
 // You can add here other imports from std or crates listed in Cargo.toml.
 
@@ -32,12 +31,14 @@ pub trait StableStorage: Send + Sync {
 
 /// Creates a new instance of stable storage.
 pub async fn build_stable_storage(root_storage_dir: PathBuf) -> Box<dyn StableStorage> {
-    unimplemented!()
+    Box::new(StableStorageImpl {
+        root_storage_dir: root_storage_dir,
+    })
 }
 
 struct StableStorageImpl {
     root_storage_dir: PathBuf,
-    mutex_guard: Mutex<()>,
+    // mutex_guard: Mutex<()>,
 }
 
 impl StableStorageImpl {
@@ -48,27 +49,23 @@ impl StableStorageImpl {
         return copy.into_os_string();
     }
 
-    // TODO these two functions should be one.
-    fn check_if_key_too_big(key_size: usize) -> Option<String> {
-        let KEY_SIZE_LIMIT = 255;
-        if key_size > KEY_SIZE_LIMIT {
-            return Some(format!(
-                "Too big key, size = {}, expected = {}",
-                key_size, KEY_SIZE_LIMIT
-            ));
+    fn check_limit(limit: usize, size: usize, communicate: &str) -> Option<String> {
+        if size > limit {
+            let mut ret_msg: String = communicate.to_owned();
+            ret_msg.push_str(&format!(", size = {}, expected = {}", size, limit));
+            return Some(ret_msg);
         }
-        None
+        return None;
+    }
+
+    fn check_if_key_too_big(key_size: usize) -> Option<String> {
+        let key_size_limit = 255;
+        Self::check_limit(key_size_limit, key_size, "Too big key")
     }
 
     fn check_if_value_too_big(value_size: usize) -> Option<String> {
-        let VALUE_SIZE_LIMIT = 65535;
-        if value_size > VALUE_SIZE_LIMIT {
-            return Some(format!(
-                "Too big value, size = {}, expected = {}",
-                value_size, VALUE_SIZE_LIMIT
-            ));
-        }
-        None
+        let value_size_limit = 65535;
+        Self::check_limit(value_size_limit, value_size, "Too big value")
     }
 
     fn encode(key: &str) -> String {
@@ -85,7 +82,7 @@ impl StableStorageImpl {
 }
 
 // TODO should get() be concurrent?
-
+// TODO readers - writers problem
 // Pomysł:
 // -W specjalnym pliku trzymamy wszystkie dostępne klucze
 // - Mamy globalnego locka na put, remove (i get??)
@@ -116,7 +113,7 @@ impl StableStorage for StableStorageImpl {
         // TODO I should put mutex here.
         // TODO why the tmp files?
         {
-            let _ = self.mutex_guard.lock().await;
+            // let _ = self.mutex_guard.lock().await;
             rename(tmp_key_path, key_path).await.unwrap();
             directory.sync_data().await.unwrap();
         }
@@ -125,13 +122,10 @@ impl StableStorage for StableStorageImpl {
     }
 
     async fn get(&self, key: &str) -> Option<Vec<u8>> {
-        const BUFFER_SIZE: usize = 2048;
-
         if let Some(_) = Self::check_if_key_too_big(key.len()) {
             return None;
         }
         let key_path = self.append_to_path(Self::encode(key));
-    
 
         let result = fs::read(key_path).await;
         if result.is_err() {
@@ -141,6 +135,15 @@ impl StableStorage for StableStorageImpl {
     }
 
     async fn remove(&mut self, key: &str) -> bool {
-        todo!()
+        let key_path = self.append_to_path(Self::encode(key));
+        if !Path::new(&key_path).exists() {
+            return false;
+        }
+        let directory = File::open(self.root_storage_dir.clone().into_os_string())
+            .await
+            .unwrap();
+        fs::remove_file(key_path).await.unwrap();
+        directory.sync_data().await.unwrap();
+        return true;
     }
 }
