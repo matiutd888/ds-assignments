@@ -74,10 +74,10 @@ impl StableStorageImpl {
         format!("{:X}", FixedOutput::finalize_fixed(hasher))
     }
 
-    fn create_tmp_code(code: &str) -> String {
-        let mut tmp_name: String = code.parse().unwrap();
-        tmp_name.push_str(code);
-        Self::encode(&*tmp_name)
+    fn create_tmp_code(key: &str) -> String {
+        let mut encoded_key = Self::encode(key);
+        encoded_key.push_str("tmp");
+        encoded_key
     }
 }
 
