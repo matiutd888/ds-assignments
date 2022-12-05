@@ -13,6 +13,7 @@ uuid = { version = "1.2", features = ["v4", "serde"] }
 async-trait = "0.1"
 log = "0.4"
 async-channel = "1.7"
+env_logger = "0.10.0"
 executor = { path = "../la1/solution/", package = "assignment-1-solution" }
 
 [dev-dependencies]
