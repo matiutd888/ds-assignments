@@ -6,14 +6,11 @@ use std::collections::{HashMap, HashSet};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 
-use log::debug;
-
 use tokio::net::UdpSocket;
 use tokio::time::sleep;
 use uuid::Uuid;
 
 use executor::System;
-
 
 fn unwrap_alive_info(alive_info: DetectorOperation) -> Vec<Uuid> {
     match alive_info {
@@ -24,16 +21,7 @@ fn unwrap_alive_info(alive_info: DetectorOperation) -> Vec<Uuid> {
 
 #[tokio::main]
 async fn main() {
-
-    // Builder::new()
-    // .target(Target::Stdout)
-    // .init();
-
     env_logger::init();
-    // syslog::init(Facility::LOG_USER,
-    //     log::LevelFilter::Debug,
-    //     Some("My app name")).unwrap();
-    debug!("eloo");
 
     let mut system = System::new().await;
     let delay = Duration::from_millis(50);
