@@ -91,7 +91,7 @@ impl Handler<DetectorOperationUdp> for FailureDetectorModule {
                     .await
                 }
                 DetectorOperation::HeartbeatResponse(uuid) => {
-                    if !self.alive_curr_set.insert(uuid.clone()) {
+                    if self.alive_curr_set.insert(uuid.clone()) {
                         self.alive_curr_ret.push(uuid);
                     }
                 }
