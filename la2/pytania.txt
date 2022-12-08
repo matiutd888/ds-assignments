@@ -1,0 +1,13 @@
+- Jak wygląda interfejs tego, co zapisujemy?
+- Czy dobrze rozumiem, że to jest tak, że jeden distributed register składa się 
+ze zbioru AtomicRegisters na WIELU maszynach???
+- Czy jeden AtomicRegister jest rozmiaru SEKTORA?
+
+
+Implementujemy Block Device 
+- Driver komunikuje siję z naszym atomic registerem
+- Atomic register jest block Device
+- Każdy SECTOR to osobna wartość nazywająca się REGISTER
+
+Plan
+- napisać komunikację za pomocą TCP (wszystkie interfejsy)
