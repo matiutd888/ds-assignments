@@ -256,6 +256,7 @@ impl Handler<StoreMsg> for Node {
                     let t: Transaction = self.pending_transaction.unwrap();
                     self.products
                         .iter_mut()
+                        .filter(|x| x.pr_type == t.pr_type)
                         .for_each(|x: &mut Product| x.price = add(x.price, t.shift));
 
                     msg.sender
@@ -263,6 +264,7 @@ impl Handler<StoreMsg> for Node {
                             content: NodeMsgContent::FinalizationAck,
                         })
                         .await;
+                    self.pending_transaction = None;
                 }
                 StoreMsgContent::Abort => {
                     check_if_transaction(&self.pending_transaction);
@@ -271,6 +273,7 @@ impl Handler<StoreMsg> for Node {
                             content: NodeMsgContent::FinalizationAck,
                         })
                         .await;
+                    self.pending_transaction = None;
                 }
             }
         }
