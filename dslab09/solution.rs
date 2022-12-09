@@ -138,12 +138,13 @@ fn check_if_voting_end(n_votes: u32, has_aborted: bool, n_nodes: u32) -> Option<
         } else {
             TwoPhaseResult::Ok
         };
-        Some(result);
+        Some(result)
+    } else {
+        None
     }
-    None
 }
 
-fn add_vote(store: &mut CyberStore2047, t: TwoPhaseResult) {
+fn add_vote(store: &mut CyberStore2047, t: TwoPhaseResult) -> Option<(u32, bool)> {
     if let StoreState::VoteCouting(n_votes, has_aborted) = store.state {
         let has_aborted_new = match t {
             TwoPhaseResult::Abort => true,
@@ -151,6 +152,9 @@ fn add_vote(store: &mut CyberStore2047, t: TwoPhaseResult) {
         };
 
         store.state = StoreState::VoteCouting(n_votes + 1, has_aborted_new);
+        Some((n_votes + 1, has_aborted_new))
+    } else {
+        None
     }
 }
 
@@ -158,18 +162,19 @@ fn add_vote(store: &mut CyberStore2047, t: TwoPhaseResult) {
 impl Handler<NodeMsg> for CyberStore2047 {
     async fn handle(&mut self, self_ref: &ModuleRef<Self>, msg: NodeMsg) {
         match (msg.content, self.state.clone()) {
-            (
-                NodeMsgContent::RequestVoteResponse(t),
-                StoreState::VoteCouting(n_votes, has_aborted),
-            ) => {
-                add_vote(self, t);
-                if let Some(result) = check_if_voting_end(n_votes, has_aborted, self.n_nodes) {
+            (NodeMsgContent::RequestVoteResponse(t), StoreState::VoteCouting(_, _)) => {
+                log::debug!("Vote response {:?}", t.clone());
+                let (new_n_votes, new_has_aborted) = add_vote(self, t).unwrap();
+                log::debug!("All votes = {:?}", self.state);
+                if let Some(result) =
+                    check_if_voting_end(new_n_votes, new_has_aborted, self.n_nodes)
+                {
                     let new_store_msg_content = if result == TwoPhaseResult::Abort {
                         StoreMsgContent::Abort
                     } else {
                         StoreMsgContent::Commit
                     };
-
+                    log::debug!("Sending voting end! {:?}", result.clone());
                     for node in self.nodes.iter() {
                         node.send(StoreMsg {
                             sender: self_ref.clone(),
@@ -181,12 +186,14 @@ impl Handler<NodeMsg> for CyberStore2047 {
                 }
             }
             (NodeMsgContent::FinalizationAck, StoreState::Finalizing(n_acks, result)) => {
+                log::debug!("Got new ack");
                 let new_n_acks = n_acks + 1;
                 let new_state = if new_n_acks == self.n_nodes {
                     let mut x: Option<CompletedCallBack> = None;
                     mem::swap(&mut x, &mut self.transaction_completed_callback);
 
-                    x.unwrap()(result);
+                    let dupa = x.unwrap()(result);
+                    dupa.await;
                     StoreState::Init
                 } else {
                     StoreState::Finalizing(new_n_acks, result)
@@ -222,6 +229,7 @@ impl Handler<StoreMsg> for Node {
 
             match msg.content {
                 StoreMsgContent::RequestVote(t) => {
+                    log::debug!("Receiving vote request");
                     let b: bool = if t.shift > 0 {
                         true
                     } else {
