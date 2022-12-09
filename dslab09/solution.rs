@@ -192,8 +192,8 @@ impl Handler<NodeMsg> for CyberStore2047 {
                     let mut x: Option<CompletedCallBack> = None;
                     mem::swap(&mut x, &mut self.transaction_completed_callback);
 
-                    let dupa = x.unwrap()(result);
-                    dupa.await;
+                    x.unwrap()(result).await;
+
                     StoreState::Init
                 } else {
                     StoreState::Finalizing(new_n_acks, result)
