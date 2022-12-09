@@ -229,6 +229,7 @@ impl Handler<StoreMsg> for Node {
 
             match msg.content {
                 StoreMsgContent::RequestVote(t) => {
+                    assert!(self.pending_transaction.is_none());
                     log::debug!("Receiving vote request");
                     let b: bool = if t.shift > 0 {
                         true
