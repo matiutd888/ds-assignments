@@ -1,6 +1,7 @@
 use async_channel::Sender;
 use executor::{Handler, ModuleRef};
 use std::future::Future;
+use std::mem;
 use std::pin::Pin;
 use uuid::Uuid;
 
@@ -46,6 +47,9 @@ pub(crate) enum NodeMsgContent {
     /// Process acknowledges to TM committing/aborting the transaction.
     FinalizationAck,
 }
+
+type CompletedCallBack =
+    Box<dyn FnOnce(TwoPhaseResult) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
 
 pub(crate) struct TransactionMessage {
     /// Request to change price.
@@ -94,6 +98,7 @@ pub(crate) struct CyberStore2047 {
     nodes: Vec<ModuleRef<Node>>,
     n_nodes: u32,
     state: StoreState,
+    transaction_completed_callback: Option<CompletedCallBack>,
 }
 
 impl CyberStore2047 {
@@ -102,6 +107,7 @@ impl CyberStore2047 {
             state: StoreState::Init,
             n_nodes: nodes.len() as u32,
             nodes: nodes,
+            transaction_completed_callback: None,
         };
     }
 }
@@ -125,17 +131,16 @@ impl Node {
     }
 }
 
-fn check_if_state_transition_from_vc(store: &mut CyberStore2047) {
-    if let StoreState::VoteCouting(n_votes, has_aborted) = store.state {
-        if n_votes == store.n_nodes {
-            let result = if has_aborted {
-                TwoPhaseResult::Abort
-            } else {
-                TwoPhaseResult::Ok
-            };
-            store.state = StoreState::Finalizing(0, result);
-        }
+fn check_if_voting_end(n_votes: u32, has_aborted: bool, n_nodes: u32) -> Option<TwoPhaseResult> {
+    if n_votes == n_nodes {
+        let result = if has_aborted {
+            TwoPhaseResult::Abort
+        } else {
+            TwoPhaseResult::Ok
+        };
+        Some(result);
     }
+    None
 }
 
 fn add_vote(store: &mut CyberStore2047, t: TwoPhaseResult) {
@@ -149,42 +154,50 @@ fn add_vote(store: &mut CyberStore2047, t: TwoPhaseResult) {
     }
 }
 
-async fn handle_request_vote_response(
-    cyber_store: &mut CyberStore2047,
-    self_ref: &ModuleRef<CyberStore2047>,
-    t: TwoPhaseResult,
-) {
-    assert!(matches!(cyber_store.state, StoreState::VoteCouting(_, _)));
-    add_vote(cyber_store, t);
-    check_if_state_transition_from_vc(cyber_store);
-    if let StoreState::Finalizing(0, result) = cyber_store.state {
-        let new_store_msg_content = if result == TwoPhaseResult::Abort {
-            StoreMsgContent::Abort
-        } else {
-            StoreMsgContent::Commit
-        };
-        for node in cyber_store.nodes.iter() {
-            node.send(StoreMsg {
-                sender: self_ref.clone(),
-                content: new_store_msg_content.clone(),
-            })
-            .await;
-        }
-    }
-}
-
 #[async_trait::async_trait]
 impl Handler<NodeMsg> for CyberStore2047 {
     async fn handle(&mut self, self_ref: &ModuleRef<Self>, msg: NodeMsg) {
-        match msg.content {
-            NodeMsgContent::RequestVoteResponse(t) => {
-                handle_request_vote_response(self, self_ref, t);
+        match (msg.content, self.state.clone()) {
+            (
+                NodeMsgContent::RequestVoteResponse(t),
+                StoreState::VoteCouting(n_votes, has_aborted),
+            ) => {
+                add_vote(self, t);
+                if let Some(result) = check_if_voting_end(n_votes, has_aborted, self.n_nodes) {
+                    let new_store_msg_content = if result == TwoPhaseResult::Abort {
+                        StoreMsgContent::Abort
+                    } else {
+                        StoreMsgContent::Commit
+                    };
+
+                    for node in self.nodes.iter() {
+                        node.send(StoreMsg {
+                            sender: self_ref.clone(),
+                            content: new_store_msg_content.clone(),
+                        })
+                        .await;
+                    }
+                    self.state = StoreState::Finalizing(0, result);
+                }
             }
-            NodeMsgContent::FinalizationAck => {
-                assert!(matches!(self.state, StoreState::Finalizing(n_votes, _)));
-                let new_n_votes = n_votes + 1;
+            (NodeMsgContent::FinalizationAck, StoreState::Finalizing(n_acks, result)) => {
+                let new_n_acks = n_acks + 1;
+                let new_state = if new_n_acks == self.n_nodes {
+                    let mut x: Option<CompletedCallBack> = None;
+                    mem::swap(&mut x, &mut self.transaction_completed_callback);
+
+                    x.unwrap()(result);
+                    StoreState::Init
+                } else {
+                    StoreState::Finalizing(new_n_acks, result)
+                };
+                self.state = new_state;
+            }
+            _ => {
+                panic!("Unexpected message")
             }
         }
+        return ();
     }
 }
 
@@ -198,7 +211,7 @@ fn add(u: u64, i: i32) -> u64 {
 
 #[async_trait::async_trait]
 impl Handler<StoreMsg> for Node {
-    async fn handle(&mut self, self_ref: &ModuleRef<Self>, msg: StoreMsg) {
+    async fn handle(&mut self, _self_ref: &ModuleRef<Self>, msg: StoreMsg) {
         if self.enabled {
             fn check_if_transaction(pending_transaction: &Option<Transaction>) {
                 if pending_transaction.is_none() {
@@ -208,13 +221,14 @@ impl Handler<StoreMsg> for Node {
 
             match msg.content {
                 StoreMsgContent::RequestVote(t) => {
-                    // TODO check if transaction. If transaction then abort? WTF??????????????
-
                     let b: bool = if t.shift > 0 {
                         true
                     } else {
                         let shift_u64 = (-t.shift) as u64;
-                        self.products.iter().all(|x| x.price > shift_u64)
+                        self.products
+                            .iter()
+                            .filter(|x| x.pr_type == t.pr_type)
+                            .all(|x| x.price > shift_u64)
                     };
                     let to_send = if b {
                         self.pending_transaction = Some(t);
@@ -282,6 +296,15 @@ impl Handler<Disable> for Node {
 #[async_trait::async_trait]
 impl Handler<TransactionMessage> for CyberStore2047 {
     async fn handle(&mut self, self_ref: &ModuleRef<Self>, msg: TransactionMessage) {
-        unimplemented!()
+        self.state = StoreState::Init;
+        self.transaction_completed_callback = Some(msg.completed_callback);
+        for node in self.nodes.iter() {
+            node.send(StoreMsg {
+                sender: self_ref.clone(),
+                content: StoreMsgContent::RequestVote(msg.transaction.clone()),
+            })
+            .await;
+        }
+        self.state = StoreState::VoteCouting(0, false);
     }
 }
