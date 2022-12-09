@@ -203,7 +203,8 @@ impl Handler<NodeMsg> for CyberStore2047 {
 
 fn add(u: u64, i: i32) -> u64 {
     if i.is_negative() {
-        u - i.wrapping_abs() as u64
+        let i2 = (-i) as u64;
+        u - i2 as u64
     } else {
         u + i as u64
     }
