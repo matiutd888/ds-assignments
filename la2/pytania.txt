@@ -1,13 +1,32 @@
-- Jak wygląda interfejs tego, co zapisujemy?
-- Czy dobrze rozumiem, że to jest tak, że jeden distributed register składa się 
-ze zbioru AtomicRegisters na WIELU maszynach???
+"There can be multiple clients, 
+and different clients can each 
+send a command with the same sector index at the same time"
+
+"We suggest using a TCP buffer itself as the queue"
+
+"It is suggested that messages sent by a process 
+to itself should skip serialization, deserialization, 
+HMAC preparation and validation phases to improve the performance."
+
 - Czy jeden AtomicRegister jest rozmiaru SEKTORA?
+- Czemu HMAC tag jest kilka razy???
+- Co to są ackknowledgements???
 
 
 Implementujemy Block Device 
 - Driver komunikuje siję z naszym atomic registerem
 - Atomic register jest block Device
 - Każdy SECTOR to osobna wartość nazywająca się REGISTER
+- Jeden proces rozproszonego rejestru to osobny linux process
 
 Plan
 - napisać komunikację za pomocą TCP (wszystkie interfejsy)
+- Stubborn links + stable storage
+- W jaki sposób wykorzystujemy stable storage???
+
+AtomicRegister - na jednej maszynie jeden sektor to jeden atomowy rejestr
+- jeden atomowy rejestr może odpowiadać na wiadomości do wielu sektorów
+- To avoid collisions between messages from different reads and writes you can use the UUID field.
+
+StableStorage
+- Co w nim w zasadzie trzymamy? Metadata do algorytmu. Ale jakie metadata?

@@ -1,5 +1,9 @@
 mod domain;
 
+mod register_client_public;
+mod stable_storage_public;
+mod transfer_public;
+
 pub use crate::domain::*;
 pub use atomic_register_public::*;
 pub use register_client_public::*;
@@ -59,6 +63,7 @@ pub mod atomic_register_public {
         sectors_manager: Arc<dyn SectorsManager>,
         processes_count: u8,
     ) -> Box<dyn AtomicRegister> {
+        // It should build stable storage
         unimplemented!()
     }
 }
@@ -85,68 +90,5 @@ pub mod sectors_manager_public {
     /// Path parameter points to a directory to which this method has exclusive access.
     pub fn build_sectors_manager(path: PathBuf) -> Arc<dyn SectorsManager> {
         unimplemented!()
-    }
-}
-
-pub mod transfer_public {
-    use crate::RegisterCommand;
-    use std::io::Error;
-    use tokio::io::{AsyncRead, AsyncWrite};
-
-    pub async fn deserialize_register_command(
-        data: &mut (dyn AsyncRead + Send + Unpin),
-        hmac_system_key: &[u8; 64],
-        hmac_client_key: &[u8; 32],
-    ) -> Result<(RegisterCommand, bool), Error> {
-        unimplemented!()
-    }
-
-    pub async fn serialize_register_command(
-        cmd: &RegisterCommand,
-        writer: &mut (dyn AsyncWrite + Send + Unpin),
-        hmac_key: &[u8],
-    ) -> Result<(), Error> {
-        unimplemented!()
-    }
-}
-
-pub mod register_client_public {
-    use crate::SystemRegisterCommand;
-    use std::sync::Arc;
-
-    #[async_trait::async_trait]
-    /// We do not need any public implementation of this trait. It is there for use
-    /// in AtomicRegister. In our opinion it is a safe bet to say some structure of
-    /// this kind must appear in your solution.
-    pub trait RegisterClient: core::marker::Send + core::marker::Sync {
-        /// Sends a system message to a single process.
-        async fn send(&self, msg: Send);
-
-        /// Broadcasts a system message to all processes in the system, including self.
-        async fn broadcast(&self, msg: Broadcast);
-    }
-
-    pub struct Broadcast {
-        pub cmd: Arc<SystemRegisterCommand>,
-    }
-
-    pub struct Send {
-        pub cmd: Arc<SystemRegisterCommand>,
-        /// Identifier of the target process. Those start at 1.
-        pub target: u8,
-    }
-}
-
-pub mod stable_storage_public {
-    #[async_trait::async_trait]
-    /// A helper trait for small amount of durable metadata needed by the register algorithm
-    /// itself. Again, it is only for AtomicRegister definition. StableStorage in unit tests
-    /// is durable, as one could expect.
-    pub trait StableStorage: Send + Sync {
-        async fn put(&mut self, key: &str, value: &[u8]) -> Result<(), String>;
-
-        async fn get(&self, key: &str) -> Option<Vec<u8>>;
-
-        async fn remove(&mut self, key: &str) -> bool;
     }
 }
