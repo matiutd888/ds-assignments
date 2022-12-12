@@ -1,11 +1,12 @@
 use crate::{
     constants::{self, MsgType},
     ClientRegisterCommand, ClientRegisterCommandContent, RegisterCommand, SectorVec,
-    SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, MAGIC_NUMBER,
+    SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, MAGIC_NUMBER, transport::ClientProcessCommunication,
 };
 use bincode::Options;
 
 use hmac::{Hmac, Mac};
+use serde::Serialize;
 use sha2::Sha256;
 use std::io::{Error, ErrorKind};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -15,7 +16,7 @@ pub async fn deserialize_register_command(
     hmac_system_key: &[u8; 64],
     hmac_client_key: &[u8; 32],
 ) -> Result<(RegisterCommand, bool), Error> {
-    return Err(Error::new(ErrorKind::Other, "oh no!"));
+    // TODO czy powinienem czytać aż do 
 }
 
 trait CustomSerializable {
@@ -121,6 +122,12 @@ fn serialize_serializable<T: serde::Serialize>(a: &T) -> Vec<u8> {
         .unwrap()
 }
 
+fn get_serializer() -> bincode::config::WithOtherIntEncoding<bincode::config::WithOtherEndian<bincode::DefaultOptions, bincode::config::BigEndian>, bincode::config::FixintEncoding> {
+    bincode::DefaultOptions::new()
+        .with_big_endian()
+        .with_fixint_encoding()
+}
+
 pub async fn serialize_register_command(
     cmd: &RegisterCommand,
     writer: &mut (dyn AsyncWrite + Send + Unpin),
@@ -129,7 +136,7 @@ pub async fn serialize_register_command(
     let msg_type = get_type(cmd);
 
     match cmd {
-        RegisterCommand::Client(c) => {
+        RegisterCommand::Client(c) => {            
             write_client_message(
                 writer,
                 [0; 3].to_vec(),
@@ -193,4 +200,12 @@ where
     msg.extend(tag);
 
     writer.write_all(&msg).await
+}
+
+async fn write_all_2<T: Serialize>(writer: &mut (dyn AsyncWrite + Send + Unpin),
+content: &T, 
+hmac_key: &[u8],
+)  -> Result<(), Error> {
+    let serialized: Vec<u8> = get_serializer().serialize(content).unwrap();
+    writer.write_all(&serialized).await
 }
