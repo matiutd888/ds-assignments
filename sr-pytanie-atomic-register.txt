@@ -1,0 +1,31 @@
+p: ___1__     W(2)_______y__________
+q:         _______R(2)   
+r:                     __x___R(1)
+
+0. q wysyła do wszystkich 1
+1. p wysyła broadcast 2 do wszystkich
+2. q to procesuje i zwraca 2 mimo że wysyłał 1 
+3. r w tym czasie też wysyła do wszystkich 1
+4. wszyscy odpowiadają r, że spoko
+5. r zwraca 1
+6. r odbiera wiadomość którą wysłło p w punkcie (1) i updejtuje 
+
+x - r kończy wysyłać
+y - p kończy wysyłać
+
+
+PYTANIE
+czy może być tak, że po wysłaniu wiadomości przez proces A, proces B wymienia jakieś wiadomości z A zanim odbierze oryginalną wiadomość procesu A?
+
+A ---X---> B
+B ---Y---> A
+A ---odpowiedz(Y) --> B
+B ---odpowiedz(X) ---> A
+ZAKŁADAJĄC że są to różne moduły
+A jeśli są to te same moduly?
+To też nie ma znaczenia bo nawet w tym samym module mam pełno pefect linków i w konsekwencji nie ma synchroniczności
+
+RACZEJ MOŻE
+Perfect linki są jednostronne i tyle
+
+Raczej nie ma nic zakładane o kolejnoći międzymodułowej

@@ -25,6 +25,8 @@ pub struct Send {
 
 struct RegisterClientImpl {}
 
+
+// For sure it implements stubborn link algorithm
 impl RegisterClient for RegisterClientImpl {
     fn send<'life0, 'async_trait>(
         &'life0 self,

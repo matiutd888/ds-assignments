@@ -68,6 +68,18 @@ pub mod atomic_register_public {
     }
 }
 
+pub mod constants {
+    pub static SECTOR_SIZE_BYTES: usize = 4096;
+    pub type MsgType = u8;
+
+    pub static TYPE_READ: u8 = 0x01;
+    pub static TYPE_WRITE: u8 = 0x02;
+    pub static TYPE_READ_PROC: u8 = 0x03;
+    pub static TYPE_VALUE: u8 = 0x04;
+    pub static TYPE_WRITE_PROC: u8 = 0x05;
+    pub static TYPE_ACK: u8 = 0x06;
+}
+
 pub mod sectors_manager_public {
     use crate::{SectorIdx, SectorVec};
     use std::path::PathBuf;

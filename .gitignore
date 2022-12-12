@@ -1,3 +1,5 @@
+la2-img/
+**/shared/
 **/.idea
 rust-playground/
 *.tgz
