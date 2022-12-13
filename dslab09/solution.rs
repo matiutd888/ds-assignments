@@ -232,7 +232,7 @@ impl Handler<StoreMsg> for Node {
                     if self.pending_transaction.is_some() {
                         log::error!("Requesting vote with transaction already pending! Transaction will be overriden");
                     }
-                    
+
                     log::debug!("Receiving vote request");
                     let b: bool = if t.shift > 0 {
                         true
