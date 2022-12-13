@@ -201,7 +201,7 @@ impl Handler<NodeMsg> for CyberStore2047 {
                 self.state = new_state;
             }
             _ => {
-                panic!("Unexpected message")
+                log::error!("Unexpected message")
             }
         }
         return ();
@@ -229,7 +229,10 @@ impl Handler<StoreMsg> for Node {
 
             match msg.content {
                 StoreMsgContent::RequestVote(t) => {
-                    assert!(self.pending_transaction.is_none());
+                    if self.pending_transaction.is_some() {
+                        log::error!("Requesting vote with transaction already pending! Transaction will be overriden");
+                    }
+                    
                     log::debug!("Receiving vote request");
                     let b: bool = if t.shift > 0 {
                         true
