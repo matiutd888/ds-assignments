@@ -8,7 +8,8 @@ Pytania
         Jeśli tak, to powinienem zapewnić że atomicregister działa bez predefiniowanego zbioru modułów
         Wtedy będę musiał zaimplementować mapę SectorIdx -> pola atomic register
     - Czy nasze rozwiązanie ma umieć parsować odpowiedzi systemu?
-
+    - W ogólności - czy każdy z modułów będzie unit testowany???
+    
 moduły
 AtomicRegister 
     dostaje gotowe, już sparsowane komendy i je przerabia
