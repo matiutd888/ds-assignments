@@ -1,7 +1,8 @@
 use crate::{
     constants::{self, MsgType},
+    transport::ClientProcessCommunication,
     ClientRegisterCommand, ClientRegisterCommandContent, RegisterCommand, SectorVec,
-    SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, MAGIC_NUMBER, transport::ClientProcessCommunication,
+    SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, MAGIC_NUMBER,
 };
 use bincode::Options;
 
@@ -9,15 +10,30 @@ use hmac::{Hmac, Mac};
 use serde::Serialize;
 use sha2::Sha256;
 use std::io::{Error, ErrorKind};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub async fn deserialize_register_command(
     data: &mut (dyn AsyncRead + Send + Unpin),
     hmac_system_key: &[u8; 64],
     hmac_client_key: &[u8; 32],
 ) -> Result<(RegisterCommand, bool), Error> {
-    // TODO czy powinienem czytać aż do 
+    // TODO czy w tej funkcji powinienem czytać aż napotkam magic number?????????
+    // Pamiętać o 
+    return Err(Error::new(ErrorKind::Other, "oh no!"));
 }
+
+pub async fn try_read(
+    data: &mut (dyn AsyncRead + Send + Unpin),
+    n_bytes: usize,
+    expected_bytes: [u8; 4],
+) -> Result {
+    let mut buf: [u8; 4] = [0; 4];
+    
+    data.read_exact(&mut buf);
+    
+}
+
+///////////////////////
 
 trait CustomSerializable {
     fn custom_serialize(&self, buffer: Vec<u8>) -> Vec<u8>;
@@ -122,7 +138,10 @@ fn serialize_serializable<T: serde::Serialize>(a: &T) -> Vec<u8> {
         .unwrap()
 }
 
-fn get_serializer() -> bincode::config::WithOtherIntEncoding<bincode::config::WithOtherEndian<bincode::DefaultOptions, bincode::config::BigEndian>, bincode::config::FixintEncoding> {
+fn get_serializer() -> bincode::config::WithOtherIntEncoding<
+    bincode::config::WithOtherEndian<bincode::DefaultOptions, bincode::config::BigEndian>,
+    bincode::config::FixintEncoding,
+> {
     bincode::DefaultOptions::new()
         .with_big_endian()
         .with_fixint_encoding()
@@ -136,7 +155,7 @@ pub async fn serialize_register_command(
     let msg_type = get_type(cmd);
 
     match cmd {
-        RegisterCommand::Client(c) => {            
+        RegisterCommand::Client(c) => {
             write_client_message(
                 writer,
                 [0; 3].to_vec(),
@@ -202,10 +221,11 @@ where
     writer.write_all(&msg).await
 }
 
-async fn write_all_2<T: Serialize>(writer: &mut (dyn AsyncWrite + Send + Unpin),
-content: &T, 
-hmac_key: &[u8],
-)  -> Result<(), Error> {
+async fn write_all_2<T: Serialize>(
+    writer: &mut (dyn AsyncWrite + Send + Unpin),
+    content: &T,
+    hmac_key: &[u8],
+) -> Result<(), Error> {
     let serialized: Vec<u8> = get_serializer().serialize(content).unwrap();
     writer.write_all(&serialized).await
 }

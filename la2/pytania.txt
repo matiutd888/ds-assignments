@@ -1,3 +1,46 @@
+plam
+1. Implementacja AtomicRegister w najprostszy możliwy sposób (przepisanie algorytmu)
+2. Implementacja Sector Managera bo to przecież proste powinno być!
+
+
+Pytania
+    - Czy będą unit testy na moduł AtomicRegister? 
+        Jeśli tak, to powinienem zapewnić że atomicregister działa bez predefiniowanego zbioru modułów
+        Wtedy będę musiał zaimplementować mapę SectorIdx -> pola atomic register
+    - Czy nasze rozwiązanie ma umieć parsować odpowiedzi systemu?
+
+moduły
+AtomicRegister 
+    dostaje gotowe, już sparsowane komendy i je przerabia
+    Używa RegisterClient by komunikować się z innymi modułami, wysyłając im odowiednie wiadomości
+
+    Każdy atomic register odpowiada predefiniowanej liczbie sektorów, 
+    dlatego nie jest problemem współbieżność
+
+    Zostanie zaimplementowany w tkai sposób, by była przetwarzana jedna wiadomosć klienta naraz
+
+    Czytamy od klienta dopiero kiedy skończy się poprzednia wiadomość.
+
+RegisterClient
+    dostaje komendy do innych procesów  i je wysyła 
+    Musi implementować stubborn linki
+    To znaczy mniej więcej tyle że wysyła wszystkie wiadomości co jakiś czas?
+
+    Jeżeli chcielibyśmy implenentować stubborn linki za pomocą wysyłania odpowiedzi, 
+    to w jakiej metodzie byłyby one deserializowane?
+
+    Można zrobić jak prosto, 
+    czyli nie wysyłać potwierdzeń a jedynie poprzestawać wysyłanie wiadomości dotyczących sektora po przetworzeniu jego wiadomości (callback zawołany)
+
+Deserializer
+    czyta z tcp aż dostanie magic number, deserializuej komendę
+
+
+run_register_process buduje moduł atomowego rejestru oraz register client
+
+
+--------------------------------
+
 "There can be multiple clients, 
 and different clients can each 
 send a command with the same sector index at the same time"

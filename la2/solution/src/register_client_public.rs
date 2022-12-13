@@ -5,6 +5,8 @@ use std::sync::Arc;
 /// We do not need any public implementation of this trait. It is there for use
 /// in AtomicRegister. In our opinion it is a safe bet to say some structure of
 /// this kind must appear in your solution.
+
+// This uses deserialize
 pub trait RegisterClient: core::marker::Send + core::marker::Sync {
     /// Sends a system message to a single process.
     async fn send(&self, msg: Send);

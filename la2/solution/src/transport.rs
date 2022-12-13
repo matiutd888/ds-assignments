@@ -7,6 +7,10 @@
 
 type MagicNumber = [u8; 4];
 
+
+// TODO to jest jednak konieczne!!!!!!!!!!!!!!
+// Bo potrzebuję znać rozmiary bajtów każdej struktury
+
 pub mod ClientProcessCommunication {
     use serde::Serialize;
 
