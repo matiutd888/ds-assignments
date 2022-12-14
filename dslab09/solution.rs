@@ -209,12 +209,7 @@ impl Handler<NodeMsg> for CyberStore2047 {
 }
 
 fn add(u: u64, i: i32) -> u64 {
-    if i.is_negative() {
-        let i2 = (-i) as u64;
-        u - i2 as u64
-    } else {
-        u + i as u64
-    }
+    u64::try_from(u as i128 + i as i128).unwrap()
 }
 
 #[async_trait::async_trait]
@@ -234,14 +229,15 @@ impl Handler<StoreMsg> for Node {
                     }
 
                     log::debug!("Receiving vote request");
-                    let b: bool = if t.shift > 0 {
-                        true
-                    } else {
-                        let shift_u64 = (-t.shift) as u64;
+                    let b: bool = {
+                        let shift_i128 = t.shift as i128;
                         self.products
                             .iter()
                             .filter(|x| x.pr_type == t.pr_type)
-                            .all(|x| x.price > shift_u64)
+                            .all(|x| match u64::try_from(x.price as i128 + shift_i128) {
+                                Ok(x) => x > 0,
+                                Err(_) => false,
+                            })
                     };
                     let to_send = if b {
                         self.pending_transaction = Some(t);
