@@ -22,8 +22,9 @@ mod tests {
         }];
         let node0 = system.register_module(Node::new(products.clone())).await;
         let node1 = system.register_module(Node::new(products)).await;
-        let cyber_store =
-            system.register_module(CyberStore2047::new(vec![node0, node1])).await;
+        let cyber_store = system
+            .register_module(CyberStore2047::new(vec![node0, node1]))
+            .await;
 
         // When:
         cyber_store
@@ -62,8 +63,9 @@ mod tests {
         }];
         let node0 = system.register_module(Node::new(products.clone())).await;
         let node1 = system.register_module(Node::new(products)).await;
-        let cyber_store =
-            system.register_module(CyberStore2047::new(vec![node0, node1])).await;
+        let cyber_store = system
+            .register_module(CyberStore2047::new(vec![node0, node1]))
+            .await;
 
         // When:
         cyber_store
@@ -148,10 +150,9 @@ mod tests {
         let products0 = vec![cheap_product];
         let node0 = system.register_module(Node::new(products0)).await;
         let node1 = system.register_module(Node::new(products1)).await;
-        let cyber_store = system.register_module(
-            CyberStore2047::new(vec![node0.clone(), node1.clone()]),
-        )
-        .await;
+        let cyber_store = system
+            .register_module(CyberStore2047::new(vec![node0.clone(), node1.clone()]))
+            .await;
 
         // When:
         cyber_store
@@ -168,12 +169,10 @@ mod tests {
             })
             .await;
 
-
         assert_eq!(
             TwoPhaseResult::Abort,
             transaction_done_rx.recv().await.unwrap()
         );
         system.shutdown().await;
     }
-
 }
