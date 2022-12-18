@@ -1,3 +1,5 @@
+use hmac::digest::typenum::True;
+use serde::de::IntoDeserializer;
 use uuid::Uuid;
 
 use crate::constants::{self, SECTOR_SIZE_BYTES};
@@ -6,12 +8,13 @@ use crate::{
     RegisterClient, SectorIdx, SectorVec, SectorsManager, StableStorage, SystemCommandHeader,
     SystemRegisterCommand, SystemRegisterCommandContent,
 };
+use core::time;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::vec;
+use std::{mem, vec};
 
 #[async_trait::async_trait]
 pub trait AtomicRegister: Send + Sync {
@@ -49,8 +52,7 @@ type SuccessCallback =
 struct Algorithm {
     readlist: HashSet<u8>,
     acklist: HashSet<u8>,
-    highest_ack: Option<(Timestamp, WriteRank, SectorVec)>,
-    highest_read: Option<(Timestamp, WriteRank, SectorVec)>,
+    highest: Option<(Timestamp, WriteRank, SectorVec)>,
     writing: bool,
     reading: bool,
     write_phase: bool,
@@ -59,10 +61,9 @@ struct Algorithm {
 impl Algorithm {
     fn clear_lists(&mut self) {
         self.acklist = HashSet::new();
-        self.highest_ack = None;
 
         self.readlist = HashSet::new();
-        self.highest_read = None;
+        self.highest = None;
     }
 
     async fn default(
@@ -74,11 +75,26 @@ impl Algorithm {
         Algorithm {
             readlist: HashSet::new(),
             acklist: HashSet::new(),
-            highest_read: None,
-            highest_ack: None,
+            highest: None,
             writing: false,
             reading: false,
             write_phase: false,
+        }
+    }
+
+    fn update_highest(&mut self, timestamp: u64, write_rank: u8, sector_data: SectorVec) {
+        let change: bool = if let Some((curr_timestamp, curr_wr, curr_data)) = self.highest {
+            match timestamp.cmp(&curr_timestamp) {
+                std::cmp::Ordering::Less => false,
+                std::cmp::Ordering::Equal => curr_wr < write_rank,
+                std::cmp::Ordering::Greater => true,
+            }
+        } else {
+            true
+        };
+
+        if change {
+            self.highest = Some((timestamp, write_rank, sector_data));
         }
     }
 }
@@ -96,6 +112,7 @@ struct AtomicRegisterImpl {
 }
 
 impl AtomicRegisterImpl {
+    // These methods could also be changed if we will be keeping the values in memory
     fn get_writeval_key(sector_idx: SectorIdx) -> String {
         format!("{}-writeval", sector_idx)
     }
@@ -120,6 +137,10 @@ impl AtomicRegisterImpl {
 
     async fn get_val(&self, sector_idx: SectorIdx) -> SectorVec {
         self.sectors_manager.read_data(sector_idx).await
+    }
+
+    async fn get_metadata(&self, sector_idx: SectorIdx) -> Metadata {
+        self.sectors_manager.read_metadata(sector_idx).await
     }
 
     async fn get_readval(&self, sector_idx: SectorIdx) -> SectorVec {
@@ -171,6 +192,35 @@ impl AtomicRegisterImpl {
         let broadcast_system_message = SystemRegisterCommand {
             header: new_system_header,
             content: SystemRegisterCommandContent::ReadProc,
+        };
+
+        self.register_client
+            .broadcast(crate::Broadcast {
+                cmd: Arc::new(broadcast_system_message),
+            })
+            .await;
+    }
+
+    async fn broadcast_writeproc(
+        &self,
+        sector_idx: SectorIdx,
+        timestamp: Timestamp,
+        write_rank: u8,
+        sector_data: SectorVec,
+    ) {
+        let new_system_header = SystemCommandHeader {
+            process_identifier: self.process_identifier,
+            msg_ident: Uuid::new_v4(),
+            read_ident: self.rid,
+            sector_idx: sector_idx,
+        };
+        let broadcast_system_message = SystemRegisterCommand {
+            header: new_system_header,
+            content: SystemRegisterCommandContent::WriteProc {
+                timestamp: timestamp,
+                write_rank: write_rank,
+                data_to_write: sector_data,
+            },
         };
 
         self.register_client
@@ -236,6 +286,76 @@ impl AtomicRegisterImpl {
         self.save_writeval(header.sector_idx, data).await;
         // Create system message and send to other processes
         self.broadcast_readproc(header.sector_idx).await;
+    }
+
+    async fn handle_readproc(&self, header: SystemCommandHeader) {
+        let sv = self.get_val(header.sector_idx).await;
+        let metadata = self.get_metadata(header.sector_idx).await;
+
+        let new_system_header = SystemCommandHeader {
+            process_identifier: self.process_identifier,
+            msg_ident: Uuid::new_v4(),
+            read_ident: header.read_ident,
+            sector_idx: header.sector_idx,
+        };
+
+        let new_cmd = SystemRegisterCommand {
+            header: new_system_header,
+            content: SystemRegisterCommandContent::Value {
+                timestamp: metadata.0,
+                write_rank: metadata.1,
+                sector_data: self.get_val(header.sector_idx).await,
+            },
+        };
+
+        self.register_client
+            .send(crate::Send {
+                cmd: Arc::new(new_cmd),
+                target: header.process_identifier,
+            })
+            .await;
+    }
+
+    async fn handle_value(
+        &mut self,
+        header: SystemCommandHeader,
+        timestamp: u64,
+        write_rank: u8,
+        sector_data: SectorVec,
+    ) {
+        if header.read_ident == self.rid {
+            let algorithm = self.a.get_mut(&header.sector_idx).unwrap();
+            if algorithm.write_phase {
+                return ();
+            }
+
+            algorithm.readlist.insert(header.process_identifier);
+            algorithm.update_highest(timestamp, write_rank, sector_data);
+
+            if algorithm.readlist.len() as u8 > (self.processes_count / 2)
+                && (algorithm.reading || algorithm.writing)
+            {
+                // get_metadata
+                let (m_timestamp, m_wr) =
+                    self.sectors_manager.read_metadata(header.sector_idx).await;
+                // get_data
+                let m_val = self.sectors_manager.read_data(header.sector_idx).await;
+
+                algorithm.update_highest(m_timestamp, m_wr, m_val);
+
+                // TODO dokończyć to - zapisać readlist, wysłać broadcast
+                let mut highest: Option<(Timestamp, WriteRank, SectorVec)> = None;
+                mem::swap(&mut highest, &mut algorithm.highest);
+
+                algorithm.clear_lists();
+                algorithm.write_phase = true;
+
+                (w_ts, w_wr, w_val) = if algorithm.writing {
+
+                }
+                self.broadcast_writeproc(sector_idx, timestamp, write_rank, sector_data)
+            }
+        }
     }
 }
 
