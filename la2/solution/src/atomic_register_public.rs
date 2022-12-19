@@ -107,30 +107,52 @@ struct AtomicRegisterImpl {
 }
 
 impl AtomicRegisterImpl {
-    // [DISC] These methods could also be changed if we will be keeping the values in memory
+    // These methods could also be changed if we will be keeping the values in memory
     // fn get_writeval_key(sector_idx: SectorIdx) -> String {
     //     format!("{}-writeval", sector_idx)
     // }
 
-    // // [DISC]
     // fn get_readval_key(sector_idx: SectorIdx) -> String {
     //     format!("{}-readval", sector_idx)
     // }
 
-    // [DISC]
-    fn get_val_key(sector_idx: SectorIdx) -> String {
-        format!("{}-val", sector_idx)
-    }
+    // fn get_val_key(sector_idx: SectorIdx) -> String {
+    //     format!("{}-val", sector_idx)
+    // }
 
-    async fn get_sector_metadata(&self, key: String) -> SectorVec {
-        let data = if let Some(vec) = self.metadata.get(&key).await {
-            assert!(vec.len() == constants::SECTOR_SIZE_BYTES);
-            vec
-        } else {
-            vec![0; constants::SECTOR_SIZE_BYTES]
-        };
-        SectorVec(data)
-    }
+    // async fn get_sector_metadata(&self, key: String) -> SectorVec {
+    //     let data = if let Some(vec) = self.metadata.get(&key).await {
+    //         assert!(vec.len() == constants::SECTOR_SIZE_BYTES);
+    //         vec
+    //     } else {
+    //         vec![0; constants::SECTOR_SIZE_BYTES]
+    //     };
+    //     SectorVec(data)
+    // }
+
+    // async fn save_writeval(&mut self, sector_idx: SectorIdx, data: SectorVec) {
+    //     self.metadata
+    //         .put(&Self::get_writeval_key(sector_idx), &data.0)
+    //         .await
+    //         .unwrap();
+    // }
+
+    // async fn save_readval(&mut self, sector_idx: SectorIdx, data: SectorVec) {
+    //     self.metadata
+    //         .put(&&Self::get_readval_key(sector_idx), &data.0)
+    //         .await
+    //         .unwrap();
+    // }
+
+    // async fn get_readval(&self, sector_idx: SectorIdx) -> SectorVec {
+    //     self.get_sector_metadata(Self::get_readval_key(sector_idx))
+    //         .await
+    // }
+
+    // async fn get_writeval(&self, sector_idx: SectorIdx) -> SectorVec {
+    //     self.get_sector_metadata(Self::get_writeval_key(sector_idx))
+    //         .await
+    // }
 
     async fn get_val(&self, sector_idx: SectorIdx) -> SectorVec {
         self.sectors_manager.read_data(sector_idx).await
@@ -152,16 +174,6 @@ impl AtomicRegisterImpl {
             .await;
     }
 
-    // async fn get_readval(&self, sector_idx: SectorIdx) -> SectorVec {
-    //     self.get_sector_metadata(Self::get_readval_key(sector_idx))
-    //         .await
-    // }
-
-    // async fn get_writeval(&self, sector_idx: SectorIdx) -> SectorVec {
-    //     self.get_sector_metadata(Self::get_writeval_key(sector_idx))
-    //         .await
-    // }
-
     async fn store_rid(&mut self) {
         self.metadata
             .put("rid", &self.rid.to_be_bytes())
@@ -176,20 +188,6 @@ impl AtomicRegisterImpl {
             0
         }
     }
-
-    // async fn save_writeval(&mut self, sector_idx: SectorIdx, data: SectorVec) {
-    //     self.metadata
-    //         .put(&Self::get_writeval_key(sector_idx), &data.0)
-    //         .await
-    //         .unwrap();
-    // }
-
-    // async fn save_readval(&mut self, sector_idx: SectorIdx, data: SectorVec) {
-    //     self.metadata
-    //         .put(&&Self::get_readval_key(sector_idx), &data.0)
-    //         .await
-    //         .unwrap();
-    // }
 
     async fn remove_algorithm(&mut self, sector_idx: SectorIdx) {
         self.a.remove(&sector_idx);
@@ -452,7 +450,8 @@ impl AtomicRegister for AtomicRegisterImpl {
     ) {
         log::debug!(
             "I am register {} and I just received command {}",
-            self.process_identifier, cmd.header.request_identifier
+            self.process_identifier,
+            cmd.header.request_identifier
         );
         self.rid = self.rid + 1;
         self.store_rid().await;
@@ -475,7 +474,9 @@ impl AtomicRegister for AtomicRegisterImpl {
     async fn system_command(&mut self, cmd: SystemRegisterCommand) {
         log::debug!(
             "I am register {} and I just received System command from {} with rid {}",
-            self.process_identifier, cmd.header.process_identifier, cmd.header.read_ident
+            self.process_identifier,
+            cmd.header.process_identifier,
+            cmd.header.read_ident
         );
 
         match cmd.content {
