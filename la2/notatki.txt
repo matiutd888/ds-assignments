@@ -1,6 +1,10 @@
-plam
-1. Implementacja AtomicRegister w najprostszy możliwy sposób (przepisanie algorytmu)
-2. Implementacja Sector Managera bo to przecież proste powinno być!
+plan
+    1. Implementacja RegisterClient
+        Implementujemy cancelanble registerclient, który co jakiś (spory) czas będzie przesyłał dwukrotnie wszystkie wiadomości pochodzące z danego request_id
+        Po skończeniu request_id usuwamy je
+
+        UWAGA na nadpisywanie request id w danym sektorze - wtedy operacja nigdy się nie skończy 
+    2.  Użycie UUID wiadomości w celach identyfikacji, czy dana wiadomość jest powtórką czy nie (trzymamy set UUID wiadomości dla każdego register identifier)
 
 
 Pytania
