@@ -195,17 +195,17 @@ impl AtomicRegisterImpl {
         self.a.remove(&sector_idx);
     }
 
-    fn get_default_ret_header(&self, sector_idx: SectorIdx) -> SystemCommandHeader {
+    fn get_default_ret_header(&self, sector_idx: SectorIdx, rid: u64) -> SystemCommandHeader {
         SystemCommandHeader {
             process_identifier: self.process_identifier,
             msg_ident: Uuid::new_v4(),
-            read_ident: self.rid,
+            read_ident: rid,
             sector_idx: sector_idx,
         }
     }
 
     async fn broadcast_readproc(&self, sector_idx: SectorIdx) {
-        let new_system_header = self.get_default_ret_header(sector_idx);
+        let new_system_header = self.get_default_ret_header(sector_idx, self.rid);
         let broadcast_system_message = SystemRegisterCommand {
             header: new_system_header,
             content: SystemRegisterCommandContent::ReadProc,
@@ -225,7 +225,7 @@ impl AtomicRegisterImpl {
         write_rank: u8,
         sector_data: SectorVec,
     ) {
-        let new_system_header = self.get_default_ret_header(sector_idx);
+        let new_system_header = self.get_default_ret_header(sector_idx, self.rid);
         let broadcast_system_message = SystemRegisterCommand {
             header: new_system_header,
             content: SystemRegisterCommandContent::WriteProc {
@@ -276,6 +276,8 @@ impl AtomicRegisterImpl {
     }
 
     async fn handle_readproc(&self, header: SystemCommandHeader) {
+        log::debug!("RID: {}, READPROC", header.read_ident);
+
         let metadata = self.get_metadata(header.sector_idx).await;
 
         let new_system_header = SystemCommandHeader {
@@ -309,6 +311,7 @@ impl AtomicRegisterImpl {
         write_rank: u8,
         sector_data: SectorVec,
     ) {
+        log::debug!("RID: {}, VALUE", header.read_ident);
         if header.read_ident == self.rid {
             let algorithm = self.a.get_mut(&header.sector_idx).unwrap();
             if algorithm.write_phase {
@@ -372,6 +375,7 @@ impl AtomicRegisterImpl {
         write_rank: u8,
         sector_data: SectorVec,
     ) {
+        log::debug!("RID: {}, WRITEPROC", header.read_ident);
         let sector_idx = header.sector_idx;
         let (ts, ws) = self.get_metadata(sector_idx).await;
 
@@ -381,7 +385,7 @@ impl AtomicRegisterImpl {
         }
 
         let new_cmd = SystemRegisterCommand {
-            header: self.get_default_ret_header(sector_idx),
+            header: self.get_default_ret_header(sector_idx, header.read_ident),
             content: SystemRegisterCommandContent::Ack,
         };
 
@@ -394,6 +398,7 @@ impl AtomicRegisterImpl {
     }
 
     async fn handle_ack(&mut self, header: SystemCommandHeader) {
+        log::debug!("RID: {}, ACK", header.read_ident);
         if header.read_ident == self.rid {
             let sector_idx = header.sector_idx;
 
@@ -403,9 +408,11 @@ impl AtomicRegisterImpl {
             }
 
             algorithm.acklist.insert(header.process_identifier);
+            log::debug!("ACK: {}", algorithm.acklist.len());
             if algorithm.acklist.len() as u8 > self.processes_count / 2
                 && (algorithm.reading || algorithm.writing)
             {
+                log::debug!("Operation will finish");
                 let mut algorithm_removed = self.a.remove(&sector_idx).unwrap();
 
                 let op_return = if algorithm_removed.reading {
@@ -425,7 +432,9 @@ impl AtomicRegisterImpl {
                     request_identifier: algorithm_removed.request_identifier,
                     op_return: op_return,
                 };
-                (algorithm_removed.success_callback)(op_succ);
+
+                (algorithm_removed.success_callback)(op_succ).await;
+                log::debug!("success callback!");
             }
         }
     }
@@ -441,6 +450,10 @@ impl AtomicRegister for AtomicRegisterImpl {
         // sending the response to client
         success_callback: Box<SuccessCallback>,
     ) {
+        log::debug!(
+            "I am register {} and I just received command {}",
+            self.process_identifier, cmd.header.request_identifier
+        );
         self.rid = self.rid + 1;
         self.store_rid().await;
         match cmd.content {
@@ -460,6 +473,11 @@ impl AtomicRegister for AtomicRegisterImpl {
     /// This function corresponds to the handlers of READ_PROC, VALUE, WRITE_PROC
     /// and ACK messages in the (N,N)-AtomicRegister algorithm.
     async fn system_command(&mut self, cmd: SystemRegisterCommand) {
+        log::debug!(
+            "I am register {} and I just received System command from {} with rid {}",
+            self.process_identifier, cmd.header.process_identifier, cmd.header.read_ident
+        );
+
         match cmd.content {
             SystemRegisterCommandContent::ReadProc => self.handle_readproc(cmd.header).await,
             SystemRegisterCommandContent::Value {
