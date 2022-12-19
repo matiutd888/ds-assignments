@@ -1,20 +1,20 @@
-use hmac::digest::typenum::True;
-use serde::de::IntoDeserializer;
 use uuid::Uuid;
 
-use crate::constants::{self, SECTOR_SIZE_BYTES};
+use crate::constants::{self};
 use crate::{
     ClientCommandHeader, ClientRegisterCommand, ClientRegisterCommandContent, OperationSuccess,
     RegisterClient, SectorIdx, SectorVec, SectorsManager, StableStorage, SystemCommandHeader,
     SystemRegisterCommand, SystemRegisterCommandContent,
 };
-use core::time;
+
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write;
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::{mem, vec};
+
+// TODO Store highest VALUE in metadata (disk) and highest metadata in memory
 
 #[async_trait::async_trait]
 pub trait AtomicRegister: Send + Sync {
@@ -48,14 +48,16 @@ type Metadata = (Timestamp, WriteRank);
 type SuccessCallback =
     dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync;
 
-#[derive(Clone)]
 struct Algorithm {
     readlist: HashSet<u8>,
     acklist: HashSet<u8>,
     highest: Option<(Timestamp, WriteRank, SectorVec)>,
     writing: bool,
     reading: bool,
+    algorithm_val: Option<SectorVec>,
     write_phase: bool,
+    request_identifier: u64,
+    success_callback: Box<SuccessCallback>,
 }
 
 impl Algorithm {
@@ -66,29 +68,24 @@ impl Algorithm {
         self.highest = None;
     }
 
-    async fn default(
-        sectors_idx: SectorIdx,
-        sectors_manager: Arc<dyn SectorsManager>,
-    ) -> Algorithm {
-        let val = sectors_manager.read_data(sectors_idx).await;
-        let metadata = sectors_manager.read_metadata(sectors_idx).await;
+    async fn new(request_identifier: u64, success_callback: Box<SuccessCallback>) -> Algorithm {
         Algorithm {
+            algorithm_val: None,
             readlist: HashSet::new(),
             acklist: HashSet::new(),
             highest: None,
             writing: false,
             reading: false,
             write_phase: false,
+            request_identifier: request_identifier,
+            success_callback: success_callback,
         }
     }
 
+    // [DISC] This function needs to be changed if I decide to store highest on disk.
     fn update_highest(&mut self, timestamp: u64, write_rank: u8, sector_data: SectorVec) {
-        let change: bool = if let Some((curr_timestamp, curr_wr, curr_data)) = self.highest {
-            match timestamp.cmp(&curr_timestamp) {
-                std::cmp::Ordering::Less => false,
-                std::cmp::Ordering::Equal => curr_wr < write_rank,
-                std::cmp::Ordering::Greater => true,
-            }
+        let change: bool = if let Some((curr_timestamp, curr_wr, _)) = self.highest {
+            (timestamp, write_rank) > (curr_timestamp, curr_wr)
         } else {
             true
         };
@@ -107,20 +104,20 @@ struct AtomicRegisterImpl {
     sectors_manager: Arc<dyn SectorsManager>,
     processes_count: u8,
     process_identifier: u8,
-    success_callbacks: HashMap<SectorIdx, Box<SuccessCallback>>,
-    request_identifiers: HashMap<SectorIdx, u64>,
 }
 
 impl AtomicRegisterImpl {
-    // These methods could also be changed if we will be keeping the values in memory
-    fn get_writeval_key(sector_idx: SectorIdx) -> String {
-        format!("{}-writeval", sector_idx)
-    }
+    // [DISC] These methods could also be changed if we will be keeping the values in memory
+    // fn get_writeval_key(sector_idx: SectorIdx) -> String {
+    //     format!("{}-writeval", sector_idx)
+    // }
 
-    fn get_readval_key(sector_idx: SectorIdx) -> String {
-        format!("{}-readval", sector_idx)
-    }
+    // // [DISC]
+    // fn get_readval_key(sector_idx: SectorIdx) -> String {
+    //     format!("{}-readval", sector_idx)
+    // }
 
+    // [DISC]
     fn get_val_key(sector_idx: SectorIdx) -> String {
         format!("{}-val", sector_idx)
     }
@@ -143,15 +140,27 @@ impl AtomicRegisterImpl {
         self.sectors_manager.read_metadata(sector_idx).await
     }
 
-    async fn get_readval(&self, sector_idx: SectorIdx) -> SectorVec {
-        self.get_sector_metadata(Self::get_readval_key(sector_idx))
-            .await
+    async fn store_val_and_metadata(
+        &self,
+        sector_idx: SectorIdx,
+        timestamp: Timestamp,
+        write_rank: u8,
+        data: SectorVec,
+    ) {
+        self.sectors_manager
+            .write(sector_idx, &(data, timestamp, write_rank))
+            .await;
     }
 
-    async fn get_writeval(&self, sector_idx: SectorIdx) -> SectorVec {
-        self.get_sector_metadata(Self::get_writeval_key(sector_idx))
-            .await
-    }
+    // async fn get_readval(&self, sector_idx: SectorIdx) -> SectorVec {
+    //     self.get_sector_metadata(Self::get_readval_key(sector_idx))
+    //         .await
+    // }
+
+    // async fn get_writeval(&self, sector_idx: SectorIdx) -> SectorVec {
+    //     self.get_sector_metadata(Self::get_writeval_key(sector_idx))
+    //         .await
+    // }
 
     async fn store_rid(&mut self) {
         self.metadata
@@ -160,35 +169,43 @@ impl AtomicRegisterImpl {
             .unwrap();
     }
 
-    async fn save_writeval(&mut self, sector_idx: SectorIdx, data: SectorVec) {
-        self.metadata
-            .put(&Self::get_writeval_key(sector_idx), &data.0)
-            .await
-            .unwrap();
-    }
-
-    async fn save_readval(&mut self, sector_idx: SectorIdx, data: SectorVec) {
-        self.metadata
-            .put(&&Self::get_readval_key(sector_idx), &data.0)
-            .await
-            .unwrap();
-    }
-
-    async fn get_algorithm_or_default(&mut self, sector_idx: SectorIdx) -> Algorithm {
-        if let Some(algorithm) = self.a.remove(&sector_idx) {
-            algorithm // We need to use the old value so we don't have to read from sectors manager each time :)
+    async fn get_stored_rid(&self) -> u64 {
+        if let Some(rid_bytes) = self.metadata.get("rid").await {
+            u64::from_be_bytes(rid_bytes.try_into().unwrap())
         } else {
-            Algorithm::default(sector_idx, self.sectors_manager.clone()).await
+            0
         }
     }
 
-    async fn broadcast_readproc(&self, sector_idx: SectorIdx) {
-        let new_system_header = SystemCommandHeader {
+    // async fn save_writeval(&mut self, sector_idx: SectorIdx, data: SectorVec) {
+    //     self.metadata
+    //         .put(&Self::get_writeval_key(sector_idx), &data.0)
+    //         .await
+    //         .unwrap();
+    // }
+
+    // async fn save_readval(&mut self, sector_idx: SectorIdx, data: SectorVec) {
+    //     self.metadata
+    //         .put(&&Self::get_readval_key(sector_idx), &data.0)
+    //         .await
+    //         .unwrap();
+    // }
+
+    async fn remove_algorithm(&mut self, sector_idx: SectorIdx) {
+        self.a.remove(&sector_idx);
+    }
+
+    fn get_default_ret_header(&self, sector_idx: SectorIdx) -> SystemCommandHeader {
+        SystemCommandHeader {
             process_identifier: self.process_identifier,
             msg_ident: Uuid::new_v4(),
             read_ident: self.rid,
             sector_idx: sector_idx,
-        };
+        }
+    }
+
+    async fn broadcast_readproc(&self, sector_idx: SectorIdx) {
+        let new_system_header = self.get_default_ret_header(sector_idx);
         let broadcast_system_message = SystemRegisterCommand {
             header: new_system_header,
             content: SystemRegisterCommandContent::ReadProc,
@@ -208,12 +225,7 @@ impl AtomicRegisterImpl {
         write_rank: u8,
         sector_data: SectorVec,
     ) {
-        let new_system_header = SystemCommandHeader {
-            process_identifier: self.process_identifier,
-            msg_ident: Uuid::new_v4(),
-            read_ident: self.rid,
-            sector_idx: sector_idx,
-        };
+        let new_system_header = self.get_default_ret_header(sector_idx);
         let broadcast_system_message = SystemRegisterCommand {
             header: new_system_header,
             content: SystemRegisterCommandContent::WriteProc {
@@ -230,43 +242,19 @@ impl AtomicRegisterImpl {
             .await;
     }
 
-    async fn create_entry_for_read(&mut self, sector_idx: SectorIdx) -> Algorithm {
-        let mut new_algorithm_entry = self.get_algorithm_or_default(sector_idx).await;
-
-        new_algorithm_entry.clear_lists();
-
-        new_algorithm_entry.writing = false;
-        new_algorithm_entry.reading = true;
-
-        new_algorithm_entry
-    }
-
     async fn handle_read_client_command(
         &mut self,
         header: ClientCommandHeader,
         success_callback: Box<SuccessCallback>,
     ) {
-        let new_entry = self.create_entry_for_read(header.sector_idx).await;
-        self.a.insert(header.sector_idx, new_entry);
+        self.remove_algorithm(header.sector_idx).await;
+        let mut new_entry = Algorithm::new(header.request_identifier, success_callback).await;
+        new_entry.reading = true;
 
-        self.request_identifiers
-            .insert(header.sector_idx, header.request_identifier);
-        self.success_callbacks
-            .insert(header.sector_idx, success_callback);
+        self.a.insert(header.sector_idx, new_entry);
 
         // Create system message and send to other processes
         self.broadcast_readproc(header.sector_idx).await;
-    }
-
-    async fn create_entry_for_write(&mut self, sector_idx: SectorIdx) -> Algorithm {
-        let mut new_algorithm_entry = self.get_algorithm_or_default(sector_idx).await;
-
-        new_algorithm_entry.clear_lists();
-
-        new_algorithm_entry.reading = false;
-        new_algorithm_entry.writing = true;
-
-        new_algorithm_entry
     }
 
     async fn handle_write_client_command(
@@ -275,21 +263,19 @@ impl AtomicRegisterImpl {
         success_callback: Box<SuccessCallback>,
         data: SectorVec,
     ) {
-        let new_entry = self.create_entry_for_write(header.sector_idx).await;
-        self.request_identifiers
-            .insert(header.sector_idx, header.request_identifier);
-        self.success_callbacks
-            .insert(header.sector_idx, success_callback);
+        self.remove_algorithm(header.sector_idx).await;
+        let mut new_entry = Algorithm::new(header.request_identifier, success_callback).await;
+        new_entry.writing = true;
+
+        new_entry.algorithm_val = Some(data);
 
         self.a.insert(header.sector_idx, new_entry);
 
-        self.save_writeval(header.sector_idx, data).await;
         // Create system message and send to other processes
         self.broadcast_readproc(header.sector_idx).await;
     }
 
     async fn handle_readproc(&self, header: SystemCommandHeader) {
-        let sv = self.get_val(header.sector_idx).await;
         let metadata = self.get_metadata(header.sector_idx).await;
 
         let new_system_header = SystemCommandHeader {
@@ -335,25 +321,111 @@ impl AtomicRegisterImpl {
             if algorithm.readlist.len() as u8 > (self.processes_count / 2)
                 && (algorithm.reading || algorithm.writing)
             {
-                // get_metadata
-                let (m_timestamp, m_wr) =
-                    self.sectors_manager.read_metadata(header.sector_idx).await;
-                // get_data
-                let m_val = self.sectors_manager.read_data(header.sector_idx).await;
+                let (m_timestamp, m_wr) = self.get_metadata(header.sector_idx).await;
+                let m_val = self.get_val(header.sector_idx).await;
 
-                algorithm.update_highest(m_timestamp, m_wr, m_val);
+                let mut algorithm_val = self.a.get_mut(&header.sector_idx).unwrap();
+
+                algorithm_val.update_highest(m_timestamp, m_wr, m_val);
 
                 // TODO dokończyć to - zapisać readlist, wysłać broadcast
                 let mut highest: Option<(Timestamp, WriteRank, SectorVec)> = None;
-                mem::swap(&mut highest, &mut algorithm.highest);
+                mem::swap(&mut highest, &mut algorithm_val.highest);
 
-                algorithm.clear_lists();
-                algorithm.write_phase = true;
+                algorithm_val.clear_lists();
+                algorithm_val.write_phase = true;
 
-                (w_ts, w_wr, w_val) = if algorithm.writing {
+                let highest_val = highest.unwrap();
 
-                }
-                self.broadcast_writeproc(sector_idx, timestamp, write_rank, sector_data)
+                let (send_ts, send_wr, send_val) = if algorithm_val.writing {
+                    let writeval = algorithm_val.algorithm_val.clone().unwrap();
+                    let self_rank = self.process_identifier;
+                    let new_timestamp = highest_val.0 + 1;
+
+                    self.store_val_and_metadata(
+                        header.sector_idx,
+                        new_timestamp,
+                        self_rank,
+                        writeval.clone(),
+                    )
+                    .await;
+
+                    (new_timestamp, self_rank, writeval)
+                } else {
+                    algorithm_val.algorithm_val = Some(highest_val.2);
+                    (
+                        highest_val.0,
+                        highest_val.1,
+                        algorithm_val.algorithm_val.clone().unwrap(),
+                    )
+                };
+                self.broadcast_writeproc(header.sector_idx, send_ts, send_wr, send_val)
+                    .await;
+            }
+        }
+    }
+
+    async fn handle_writeproc(
+        &mut self,
+        header: SystemCommandHeader,
+        timestamp: u64,
+        write_rank: u8,
+        sector_data: SectorVec,
+    ) {
+        let sector_idx = header.sector_idx;
+        let (ts, ws) = self.get_metadata(sector_idx).await;
+
+        if (timestamp, write_rank) > (ts, ws) {
+            self.store_val_and_metadata(sector_idx, timestamp, write_rank, sector_data)
+                .await;
+        }
+
+        let new_cmd = SystemRegisterCommand {
+            header: self.get_default_ret_header(sector_idx),
+            content: SystemRegisterCommandContent::Ack,
+        };
+
+        self.register_client
+            .send(crate::Send {
+                cmd: Arc::new(new_cmd),
+                target: header.process_identifier,
+            })
+            .await;
+    }
+
+    async fn handle_ack(&mut self, header: SystemCommandHeader) {
+        if header.read_ident == self.rid {
+            let sector_idx = header.sector_idx;
+
+            let algorithm = self.a.get_mut(&sector_idx).unwrap();
+            if !algorithm.write_phase {
+                return ();
+            }
+
+            algorithm.acklist.insert(header.process_identifier);
+            if algorithm.acklist.len() as u8 > self.processes_count / 2
+                && (algorithm.reading || algorithm.writing)
+            {
+                let mut algorithm_removed = self.a.remove(&sector_idx).unwrap();
+
+                let op_return = if algorithm_removed.reading {
+                    let mut readval: Option<SectorVec> = None;
+                    std::mem::swap(&mut readval, &mut algorithm_removed.algorithm_val);
+
+                    crate::OperationReturn::Read(crate::ReadReturn {
+                        read_data: readval.unwrap(),
+                    })
+                } else {
+                    crate::OperationReturn::Write
+                };
+
+                self.remove_algorithm(sector_idx).await;
+
+                let op_succ = OperationSuccess {
+                    request_identifier: algorithm_removed.request_identifier,
+                    op_return: op_return,
+                };
+                (algorithm_removed.success_callback)(op_succ);
             }
         }
     }
@@ -389,18 +461,24 @@ impl AtomicRegister for AtomicRegisterImpl {
     /// and ACK messages in the (N,N)-AtomicRegister algorithm.
     async fn system_command(&mut self, cmd: SystemRegisterCommand) {
         match cmd.content {
-            SystemRegisterCommandContent::ReadProc => todo!(),
+            SystemRegisterCommandContent::ReadProc => self.handle_readproc(cmd.header).await,
             SystemRegisterCommandContent::Value {
                 timestamp,
                 write_rank,
                 sector_data,
-            } => todo!(),
+            } => {
+                self.handle_value(cmd.header, timestamp, write_rank, sector_data)
+                    .await
+            }
             SystemRegisterCommandContent::WriteProc {
                 timestamp,
                 write_rank,
                 data_to_write,
-            } => todo!(),
-            SystemRegisterCommandContent::Ack => todo!(),
+            } => {
+                self.handle_writeproc(cmd.header, timestamp, write_rank, data_to_write)
+                    .await
+            }
+            SystemRegisterCommandContent::Ack => self.handle_ack(cmd.header).await,
         }
     }
 }
@@ -419,27 +497,15 @@ pub async fn build_atomic_register(
     sectors_manager: Arc<dyn SectorsManager>,
     processes_count: u8,
 ) -> Box<dyn AtomicRegister> {
-    // It should initialize stable storage
-
-    // Here it should recover metadata from stable storage
-    todo!()
-    // let a: Algorithm = Algorithm {
-    //     rid: 0,
-    //     readlist: HashMap<Sector>,
-    //     acklist: vec![false; processes_count as usize],
-    //     reading: false,
-    //     writing: false,
-    //     readval_key: "readval_key",
-    //     writeval_key: "writeval_key",
-    //     write_phase: false,
-    // };
-
-    // metadata.put(key, value)
-    // Box::new(AtomicRegisterImpl {
-    //     a,
-    //     metadata,
-    //     register_client,
-    //     sectors_manager,
-    //     processes_count,
-    // })
+    let mut atomic_register = AtomicRegisterImpl {
+        rid: 0,
+        a: HashMap::new(),
+        metadata,
+        register_client,
+        sectors_manager,
+        processes_count,
+        process_identifier: self_ident,
+    };
+    atomic_register.rid = atomic_register.get_stored_rid().await;
+    Box::new(atomic_register)
 }

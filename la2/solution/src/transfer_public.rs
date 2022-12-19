@@ -18,20 +18,21 @@ pub async fn deserialize_register_command(
     hmac_client_key: &[u8; 32],
 ) -> Result<(RegisterCommand, bool), Error> {
     // TODO czy w tej funkcji powinienem czytać aż napotkam magic number?????????
-    // Pamiętać o 
-    return Err(Error::new(ErrorKind::Other, "oh no!"));
+    // Pamiętać o
+    todo!()
+    // return Err(Error::new(ErrorKind::Other, "oh no!"));
 }
 
-pub async fn try_read(
-    data: &mut (dyn AsyncRead + Send + Unpin),
-    n_bytes: usize,
-    expected_bytes: [u8; 4],
-) -> Result {
-    let mut buf: [u8; 4] = [0; 4];
-    
-    data.read_exact(&mut buf);
-    
-}
+// pub async fn try_read(
+//     data: &mut (dyn AsyncRead + Send + Unpin),
+//     n_bytes: usize,
+//     expected_bytes: [u8; 4],
+// ) -> Result {
+//     let mut buf: [u8; 4] = [0; 4];
+
+//     data.read_exact(&mut buf);
+
+// }
 
 ///////////////////////
 

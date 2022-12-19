@@ -4,12 +4,26 @@ plam
 
 
 Pytania
+    - Jak ma się zachować nasz register jak dostanie od klienta operację na sector kiedy poprzednia operacja nie została jeszcze skończona?
+    - Czym u licha jest request Identifier
+
+
+
+
+
+
+
+
+Odpowiedziane
     - Czy będą unit testy na moduł AtomicRegister? 
         Jeśli tak, to powinienem zapewnić że atomicregister działa bez predefiniowanego zbioru modułów
         Wtedy będę musiał zaimplementować mapę SectorIdx -> pola atomic register
+
+        TAK,
     - Czy nasze rozwiązanie ma umieć parsować odpowiedzi systemu?
+        NIE MUSI 
     - W ogólności - czy każdy z modułów będzie unit testowany???
-    
+        TAK DEBILU
 moduły
 AtomicRegister 
     dostaje gotowe, już sparsowane komendy i je przerabia

@@ -2,10 +2,10 @@ mod domain;
 
 mod atomic_register_public;
 mod register_client_public;
+mod sectors_manager_public;
 mod stable_storage_public;
 mod transfer_public;
 mod transport;
-mod sectors_manager_public;
 
 pub use crate::domain::*;
 pub use atomic_register_public::*;
@@ -29,4 +29,3 @@ pub mod constants {
     pub const TYPE_WRITE_PROC: u8 = 0x05;
     pub const TYPE_ACK: u8 = 0x06;
 }
-

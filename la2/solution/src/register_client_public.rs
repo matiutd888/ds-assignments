@@ -28,30 +28,9 @@ pub struct Send {
 struct RegisterClientImpl {}
 
 // For sure it implements stubborn link algorithm
+#[async_trait::async_trait]
 impl RegisterClient for RegisterClientImpl {
-    fn send<'life0, 'async_trait>(
-        &'life0 self,
-        msg: Send,
-    ) -> core::pin::Pin<
-        Box<dyn core::future::Future<Output = ()> + core::marker::Send + 'async_trait>,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        todo!()
-    }
+    async fn send(&self, msg: Send) {}
 
-    fn broadcast<'life0, 'async_trait>(
-        &'life0 self,
-        msg: Broadcast,
-    ) -> core::pin::Pin<
-        Box<dyn core::future::Future<Output = ()> + core::marker::Send + 'async_trait>,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        todo!()
-    }
+    async fn broadcast(&self, msg: Broadcast) {}
 }

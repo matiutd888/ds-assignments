@@ -15,7 +15,7 @@ upon event < nnar, Init > do
     writeval := _;
     readval := _;
     write_phase := FALSE;
-    store(wr, ts, val, rid);
+    store(wr, ts, val, rid); 
 
 upon event < nnar, Recovery > do
     retrieve(wr, ts, val, rid);
@@ -42,7 +42,7 @@ upon event <sl, Deliver | q, [VALUE, r, ts', wr', v'] > such that r == rid and !
     readlist[q] := (ts', wr', v');
     if #(readlist) > N / 2 and (reading or writing) then
         readlist[self] := (ts, wr, val);
-        (maxts, rr, readval) := highest(readlist);
+        (maxts, rr, readval) := highest(readlist);  
         readlist := [ _ ] `of length` N;
         acklist := [ _ ] `of length` N;
         write_phase := TRUE;
