@@ -9,6 +9,7 @@ plan
     TODO Pomyśleć, w jaki sposób powinienem przekazywać wiadomość o zakończeniu operacji odpowiedniemu taskowi!!!
 
 Pytania
+    -  "If a command fails for any reason, the corresponding response shall have an empty content" KIEDY JEST TAKA SYTUACJA??????????
     - Jak ma się zachować nasz register jak dostanie od klienta operację na sector kiedy poprzednia operacja nie została jeszcze skończona?
     - Jak wykorzystywać te UUID
         - Pomysł: idenfityikować czy wiadomość jest nowa czy nie
