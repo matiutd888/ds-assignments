@@ -6,17 +6,58 @@ mod sectors_manager_public;
 mod stable_storage_public;
 mod transfer_public;
 mod transport;
+mod reversible_stable_storage_public;
+
+use std::{path::PathBuf};
 
 pub use crate::domain::*;
 pub use atomic_register_public::*;
 pub use register_client_public::*;
+use reversible_stable_storage_public::ReversibleStableStorage;
 pub use sectors_manager_public::*;
 pub use stable_storage_public::*;
+use tokio::net::TcpListener;
 pub use transfer_public::*;
+pub use register_client_public::*;
 
-pub async fn run_register_process(config: Configuration) {
-    unimplemented!()
+struct System {
+
 }
+
+impl System {
+
+}
+
+struct TcpReader {
+
+}
+
+impl TcpReader {
+
+    // Open connection as FAST as possible
+    async fn new(tcp_address: (String, u16)) {
+        let socket = TcpListener::bind(tcp_address).await.unwrap();
+    }
+}
+
+// Task dla każdego atomic register czytający z kolejek
+// Task czytający z tcp clienta i wysyłający odpowiednie rzeczy
+pub async fn run_register_process(config: Configuration) {
+    
+}
+
+
+
+// This probably won't be neccessary
+// struct MessageTracker {
+//     client_messages: Box<dyn ReversibleStableStorage>,
+// }
+
+// impl MessageTracker {
+//     fn persist_client_command() {
+
+//     }
+// }
 
 pub mod constants {
     pub const SECTOR_SIZE_BYTES: usize = 4096;

@@ -1,15 +1,21 @@
 plan
-    1. Implementacja RegisterClient
-        Implementujemy cancelanble registerclient, który co jakiś (spory) czas będzie przesyłał dwukrotnie wszystkie wiadomości pochodzące z danego request_id
-        Po skończeniu request_id usuwamy je
+    // 1. Implementacja RegisterClient
+    //    Implementujemy cancelanble registerclient, który co jakiś (spory) czas będzie przesyłał dwukrotnie wszystkie wiadomości pochodzące z danego request_id
+    //    Po skończeniu request_id usuwamy je
 
-        UWAGA na nadpisywanie request id w danym sektorze - wtedy operacja nigdy się nie skończy 
+    //    UWAGA na nadpisywanie request id w danym sektorze - wtedy operacja nigdy się nie skończy 
     2.  Użycie UUID wiadomości w celach identyfikacji, czy dana wiadomość jest powtórką czy nie (trzymamy set UUID wiadomości dla każdego register identifier)
-
+    3.  Implementcja modułu głównego - każdy task to osobne połączenie; 
+    TODO Pomyśleć, w jaki sposób powinienem przekazywać wiadomość o zakończeniu operacji odpowiedniemu taskowi!!!
 
 Pytania
     - Jak ma się zachować nasz register jak dostanie od klienta operację na sector kiedy poprzednia operacja nie została jeszcze skończona?
-    - Czym u licha jest request Identifier
+    - Jak wykorzystywać te UUID
+        - Pomysł: idenfityikować czy wiadomość jest nowa czy nie
+    - Co jeśli wiadomość 1) Klienta 2) Systemu ma invalid HMAC??
+    - Czy mamy perzystowac requesty klienta? Tj - czy jak się jako proces wywalimy, powinniśmy po obudzeniu przesłać odpowiedź klientowi że w sumie to był błąd
+        - Odpowiedź: Nie mamy, bo przecież po recovery nie mamy jak odnaleźć klienta do którego chcicelibyśmy odpisać wiadomość
+    -
 
 
 
