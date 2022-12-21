@@ -98,6 +98,7 @@ impl Algorithm {
 
 struct AtomicRegisterImpl {
     rid: u64,
+    // This really should always have only one element!
     a: HashMap<SectorIdx, Algorithm>,
     metadata: Box<dyn StableStorage>,
     register_client: Arc<dyn RegisterClient>,

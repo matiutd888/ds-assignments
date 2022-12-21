@@ -112,6 +112,8 @@ impl SectorsManager for SectorsManagerImpl {
         }
     }
 
+    // TODO Write cleaup function.
+
     // It can store metadata in filename
     /// Writes a new data, along with timestamp and write rank to some sector.
     async fn write(&self, idx: SectorIdx, sector: &(SectorVec, u64, u8)) {
