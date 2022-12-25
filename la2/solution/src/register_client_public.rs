@@ -1,13 +1,13 @@
 use tokio::{
     net::TcpStream,
     sync::{
-        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        mpsc::{channel, Receiver, Sender},
         RwLock,
     },
     time,
 };
 
-use crate::{serialize_register_command, RegisterCommand, SectorIdx, SystemRegisterCommand};
+use crate::{serialize_register_command, RegisterCommand, SectorIdx, SystemRegisterCommand, MySender};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 #[async_trait::async_trait]
@@ -32,24 +32,26 @@ pub struct Send {
     pub target: u8,
 }
 
-struct RegisterClientImpl {
+pub struct RegisterClientImpl {
     to_rebroadcast: Arc<RwLock<HashMap<SectorIdx, Broadcast>>>,
     // TODO think about changing those into bounded Senders
-    self_sender: UnboundedSender<SystemRegisterCommand>,
-    tcp_sender: UnboundedSender<Send>,
+    self_sender: Arc<dyn MySender<SystemRegisterCommand>>,
+    tcp_sender: Sender<Send>,
     self_rank: u8,
     processes_count: usize,
 }
 
 impl RegisterClientImpl {
-    async fn new(
+    const CHANNEL_SIZE: usize = 2137;
+
+    pub async fn new(
         self_rank: u8,
         processes_count: usize,
         tcp_locations: Vec<(String, u16)>,
         hmac_key: [u8; 64],
-        self_sender: UnboundedSender<SystemRegisterCommand>,
+        self_sender: Arc<dyn MySender<SystemRegisterCommand>>,
     ) -> RegisterClientImpl {
-        let (s, r) = unbounded_channel::<Send>();
+        let (s, r) = channel(Self::CHANNEL_SIZE);
         let mut tcp_sender = TcpSender::new(tcp_locations, r, hmac_key);
         let _ = tokio::spawn(async move {
             tcp_sender.send_in_loop().await;
@@ -99,8 +101,8 @@ impl RegisterClientImpl {
 
     async fn handle_broadcast(
         b: &Broadcast,
-        self_sender: &UnboundedSender<SystemRegisterCommand>,
-        tcp_sender: &UnboundedSender<Send>,
+        self_sender: &Arc<dyn MySender<SystemRegisterCommand>>,
+        tcp_sender: &Sender<Send>,
         processes_count: usize,
         self_rank: u8,
     ) {
@@ -132,14 +134,14 @@ impl RegisterClientImpl {
 struct TcpSender {
     tcp_locations: Vec<(String, u16)>,
     streams: Vec<Option<TcpStream>>,
-    receiver: UnboundedReceiver<Send>,
+    receiver: Receiver<Send>,
     hmac_key: [u8; 64],
 }
 
 impl TcpSender {
     pub fn new(
         tcp_locations: Vec<(String, u16)>,
-        receiver: UnboundedReceiver<Send>,
+        receiver: Receiver<Send>,
         hmac_key: [u8; 64],
     ) -> TcpSender {
         let mut streams = Vec::new();
