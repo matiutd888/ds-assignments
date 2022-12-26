@@ -9,6 +9,8 @@ plan
     TODO Pomyśleć, w jaki sposób powinienem przekazywać wiadomość o zakończeniu operacji odpowiedniemu taskowi!!!
 
 Pytania
+    - Jak mamy się zachować jak request number się powtarza?
+        Na razie to ignoruję!
     -  "If a command fails for any reason, the corresponding response shall have an empty content" KIEDY JEST TAKA SYTUACJA??????????
     - Jak ma się zachować nasz register jak dostanie od klienta operację na sector kiedy poprzednia operacja nie została jeszcze skończona?
     - Jak wykorzystywać te UUID

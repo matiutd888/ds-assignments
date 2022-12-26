@@ -1,18 +1,18 @@
 use uuid::Uuid;
 
-use crate::constants::{self};
 use crate::{
-    ClientCommandHeader, ClientRegisterCommand, ClientRegisterCommandContent, OperationSuccess,
-    RegisterClient, SectorIdx, SectorVec, SectorsManager, StableStorage, SystemCommandHeader,
-    SystemRegisterCommand, SystemRegisterCommandContent, register_client_public,
+    register_client_public, ClientCommandHeader, ClientRegisterCommand,
+    ClientRegisterCommandContent, OperationSuccess, RegisterClient, SectorIdx, SectorVec,
+    SectorsManager, StableStorage, SystemCommandHeader, SystemRegisterCommand,
+    SystemRegisterCommandContent,
 };
 
 use std::collections::{HashMap, HashSet};
 
 use std::future::Future;
+use std::mem;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::{mem, vec};
 
 // TODO Store highest VALUE in metadata (disk) and highest metadata in memory
 
@@ -199,7 +199,7 @@ impl AtomicRegisterImpl {
             process_identifier: self.process_identifier,
             msg_ident: Uuid::new_v4(),
             read_ident: rid,
-            sector_idx: sector_idx,
+            sector_idx,
         }
     }
 

@@ -10,7 +10,7 @@ mod transport;
 
 use std::{
     path::PathBuf,
-    sync::{atomic::AtomicBool, Arc, Mutex},
+    sync::Arc, collections::HashSet,
 };
 
 pub use crate::domain::*;
@@ -24,10 +24,7 @@ use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
 };
 pub use transfer_public::*;
-
-struct System {}
-
-impl System {}
+use uuid::Uuid;
 
 #[async_trait::async_trait]
 pub trait MySender<T>: Send + Sync {
@@ -90,7 +87,7 @@ impl TcpReader {
         .await;
     }
 
-    async fn send_op_success(stream: &mut OwnedWriteHalf, op_success: OperationSuccess) {
+    async fn send_op_success(_stream: &mut OwnedWriteHalf, _op_success: OperationSuccess) {
         todo!();
     }
 
@@ -200,7 +197,7 @@ struct AtomicRegisterCommandsDisposer {
     client_senders: Vec<Sender<ClientAtomicRegisterTaskCommand>>,
     system_senders: Vec<Sender<SystemAtomicRegisterTaskCommand>>,
     n_atomic_registers: usize,
-    n_sectors: u64,
+    _n_sectors: u64,
 }
 
 struct AtomicHandler {
@@ -239,7 +236,7 @@ impl AtomicHandler {
             system_senders: system_senders,
             client_senders: client_senders,
             n_atomic_registers: n_atomic_registers,
-            n_sectors: n_sectors,
+            _n_sectors: n_sectors,
         };
 
         AtomicHandler {
@@ -277,11 +274,15 @@ impl AtomicHandler {
             let (s, mut r_finished) = channel::<OperationSuccess>(1);
             let s_arc = Arc::new(s);
             let mut current_operation_data: Option<(u64, Sender<OperationSuccess>)> = None;
+            let mut messages_during_current_request: HashSet<Uuid> = HashSet::new();
             loop {
                 if let Some((current_sector, success_sender)) = &current_operation_data {
                     select! {
-                        Some(cmd) = r_s.recv() => {
-                            a.system_command(cmd).await;
+                        Some(cmd) = r_s.recv() => {                        
+                            if !messages_during_current_request.contains(&cmd.header.msg_ident) {
+                                messages_during_current_request.insert(cmd.header.msg_ident.clone());
+                                a.system_command(cmd).await;
+                            }
                         },
                         Some(op) = r_finished.recv() => {
                             register_client.cancel_broadcast(current_sector.clone()).await;
@@ -292,7 +293,7 @@ impl AtomicHandler {
                 } else {
                     if let Some((cmd, sender)) = r_c.recv().await {
                         current_operation_data = Some((cmd.header.sector_idx, sender));
-                        
+                        messages_during_current_request.clear();
                         let s_cloned = s_arc.clone();
                         a.client_command(
                             cmd,
