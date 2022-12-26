@@ -9,13 +9,13 @@ use bincode::Options;
 use hmac::{Hmac, Mac};
 use serde::Serialize;
 use sha2::Sha256;
-use std::io::{Error, ErrorKind};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use std::io::{Error};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 pub async fn deserialize_register_command(
-    data: &mut (dyn AsyncRead + Send + Unpin),
-    hmac_system_key: &[u8; 64],
-    hmac_client_key: &[u8; 32],
+    _data: &mut (dyn AsyncRead + Send + Unpin),
+    _hmac_system_key: &[u8; 64],
+    _hmac_client_key: &[u8; 32],
 ) -> Result<(RegisterCommand, bool), Error> {
     // TODO czy w tej funkcji powinienem czytać aż napotkam magic number?????????
     // Pamiętać o
