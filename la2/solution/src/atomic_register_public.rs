@@ -4,7 +4,7 @@ use crate::constants::{self};
 use crate::{
     ClientCommandHeader, ClientRegisterCommand, ClientRegisterCommandContent, OperationSuccess,
     RegisterClient, SectorIdx, SectorVec, SectorsManager, StableStorage, SystemCommandHeader,
-    SystemRegisterCommand, SystemRegisterCommandContent,
+    SystemRegisterCommand, SystemRegisterCommandContent, register_client_public,
 };
 
 use std::collections::{HashMap, HashSet};
@@ -211,7 +211,7 @@ impl AtomicRegisterImpl {
         };
 
         self.register_client
-            .broadcast(crate::Broadcast {
+            .broadcast(register_client_public::Broadcast {
                 cmd: Arc::new(broadcast_system_message),
             })
             .await;
@@ -235,7 +235,7 @@ impl AtomicRegisterImpl {
         };
 
         self.register_client
-            .broadcast(crate::Broadcast {
+            .broadcast(register_client_public::Broadcast {
                 cmd: Arc::new(broadcast_system_message),
             })
             .await;
@@ -296,7 +296,7 @@ impl AtomicRegisterImpl {
         };
 
         self.register_client
-            .send(crate::Send {
+            .send(register_client_public::Send {
                 cmd: Arc::new(new_cmd),
                 target: header.process_identifier,
             })
@@ -389,7 +389,7 @@ impl AtomicRegisterImpl {
         };
 
         self.register_client
-            .send(crate::Send {
+            .send(register_client_public::Send {
                 cmd: Arc::new(new_cmd),
                 target: header.process_identifier,
             })
