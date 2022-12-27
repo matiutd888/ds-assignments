@@ -1,4 +1,4 @@
-use std::vec;
+use std::{vec, collections::VecDeque};
 
 use assignment_2_solution::{
     deserialize_register_command, serialize_register_command, ClientCommandHeader,
@@ -95,6 +95,17 @@ async fn serialize_deserialize_is_identity_for_every_message_type() {
         serialize_register_command(&cmd, &mut sink, &[0x00_u8; 32])
             .await
             .expect("Could not serialize?");
+
+
+        let mut deque: VecDeque<u8> = VecDeque::from(sink);
+
+        deque.push_front(0x61);
+        deque.push_front(0x64);
+        deque.push_front(0x74);
+        deque.push_front(0x61);
+
+
+        sink = Vec::from(deque);
         let mut slice: &[u8] = &sink[..];
         let data_read: &mut (dyn tokio::io::AsyncRead + Send + Unpin) = &mut slice;
         

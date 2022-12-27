@@ -45,7 +45,6 @@ pub async fn deserialize_register_command(
                 let command =
                     RegisterCommand::Client(c.read_client_command(&mut buff_reader).await?);
                 let tag = read_hmac_tag(&mut buff_reader).await?;
-                println!("hmac read");
                 return Ok((command, verify_hmac_tag(&tag, &c.content, _hmac_client_key)));
             }
             0x3..=0x6 => {
@@ -57,7 +56,6 @@ pub async fn deserialize_register_command(
                 let command =
                     RegisterCommand::System(s.read_system_command(&mut buff_reader).await?);
                     let tag = read_hmac_tag(&mut buff_reader).await?;
-                    println!("hmac read");
                 return Ok((command, verify_hmac_tag(&tag, &s.content, hmac_system_key)));
             }
             _ => {
@@ -79,7 +77,6 @@ impl ClientCommandReader {
     ) -> Result<ClientRegisterCommand, Error> {
         let header: ClientCommandHeader = self.read_header(async_read).await?;
         let content: ClientRegisterCommandContent = self.read_content(async_read).await?;
-        println!("content and header parsed correctly");
         Ok(ClientRegisterCommand { header, content })
     }
 
@@ -93,7 +90,6 @@ impl ClientCommandReader {
         let request_number = u64::custom_deserialize(&header_buf[0..8])?;
         let sector_index = u64::custom_deserialize(&header_buf[8..])?;
         self.content.extend(header_buf);
-        println!("header parsed correctly! {}", self.msg_type);
         Ok(ClientCommandHeader {
             request_identifier: request_number,
             sector_idx: sector_index,
@@ -146,9 +142,7 @@ impl SystemCommandReader {
         async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
     ) -> Result<SystemRegisterCommand, Error> {
         let header: SystemCommandHeader = self.read_header(async_read).await?;
-        println!("header read correctly");
         let content: SystemRegisterCommandContent = self.read_content(async_read).await?;
-        println!("content read correctly");
         Ok(SystemRegisterCommand { header, content })
     }
 
@@ -403,7 +397,6 @@ pub async fn serialize_register_command(
         }
 
         RegisterCommand::System(s) => {
-            println!("Received system command ");
             let padding: Vec<u8> = [0; 2].to_vec();
             let mut pre_header = Vec::new();
             pre_header.extend(padding);
@@ -442,22 +435,13 @@ where
     T: CustomSerializable,
     U: CustomSerializable,
 {
-    println!("--------------------------------------");
-    println!("serialing type {}", msg_type);
     let mut msg: Vec<u8> = vec![];
-    println!("{}", msg.len());
     msg.extend(MAGIC_NUMBER);
-    println!("{}", msg.len());
     msg.extend(pre_header);
-    println!("{}", msg.len());
     msg = msg_type.custom_serialize(msg);
-    println!("{}", msg.len());
     msg = header.custom_serialize(msg);
-    println!("{}", msg.len());
     msg = content.custom_serialize(msg);
-    println!("{}", msg.len());
     let tag = calculate_hmac_tag(&msg, &hmac_key);
     msg.extend(tag);
-    println!("{}", msg.len());
     writer.write_all(&msg).await
 }
