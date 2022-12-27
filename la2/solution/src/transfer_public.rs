@@ -1,38 +1,100 @@
 use crate::{
     constants::{self, MsgType},
-    transport::ClientProcessCommunication,
     ClientRegisterCommand, ClientRegisterCommandContent, RegisterCommand, SectorVec,
     SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, MAGIC_NUMBER,
 };
 use bincode::Options;
 
+use bytes::Buf;
 use hmac::{Hmac, Mac};
 use serde::Serialize;
 use sha2::Sha256;
-use std::io::{Error};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use std::io::Error;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub async fn deserialize_register_command(
-    _data: &mut (dyn AsyncRead + Send + Unpin),
+    data: &mut (dyn AsyncRead + Send + Unpin),
     _hmac_system_key: &[u8; 64],
     _hmac_client_key: &[u8; 32],
 ) -> Result<(RegisterCommand, bool), Error> {
-    // TODO czy w tej funkcji powinienem czytać aż napotkam magic number?????????
-    // Pamiętać o
+    
+    read_magic_number(data).await?;
+
     todo!()
     // return Err(Error::new(ErrorKind::Other, "oh no!"));
 }
 
-// pub async fn try_read(
-//     data: &mut (dyn AsyncRead + Send + Unpin),
-//     n_bytes: usize,
-//     expected_bytes: [u8; 4],
-// ) -> Result {
-//     let mut buf: [u8; 4] = [0; 4];
 
-//     data.read_exact(&mut buf);
+// This function is terrible :)
+async fn read_magic_number(
+    data: &mut (dyn AsyncRead + Send + Unpin),
+) -> Result<(), Error> {
+    let expected_bytes: [u8; 4] = MAGIC_NUMBER;
+    let find_next_index_value = |buf: &mut [u8; 4], matching: usize| -> usize {
+        let start_index_in_buf = if expected_bytes[0] == buf[3] {
+            3
+        } else if matching < 3 && buf[2] == expected_bytes[0] {
+            2
+        } else if matching < 2 && buf[1] == expected_bytes[0] {
+            1
+        } else {
+            0
+        };
 
+        let sequence_end_in_expected = expected_bytes.len() - start_index_in_buf;
+        let index = if start_index_in_buf > 0 && expected_bytes[1..sequence_end_in_expected].eq(&buf[(start_index_in_buf + 1)..]) {
+            sequence_end_in_expected           
+        } else {
+            0
+        };
+    
+        buf[0..index].copy_from_slice(&expected_bytes[0..index]);
+        index
+    };
+
+
+    let mut buf: [u8; 4] = [0; 4];
+    let index = 0;
+    loop {
+        data.read_exact(&mut buf[index..]).await?;
+        let mut matching = index;
+        while matching < 4 && expected_bytes[matching] == buf[index] {
+            matching = matching + 1;
+        }
+        if matching == 4 {
+            return Ok(());
+        }
+        find_next_index_value(&mut buf, matching);
+    }
+}
+
+// fn read_until_4_bytes<R: Read>(reader: &mut R) -> io::Result<()> {
+//     let target = [0x61, 0x74, 0x64, 0x64];
+//     let mut buffer = [0; 4];
+//     let mut bytes_read = 0;
+//     let mut index = 0;
+//     while index < 4 {
+//         let n = reader.read(&mut buffer[bytes_read..])?;
+//         if n == 0 {
+//             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "failed to read 4 bytes"));
+//         }
+//         bytes_read += n;
+//         while index < 4 && buffer[index] == target[index] {
+//             index += 1;
+//         }
+//         if index < 4 {
+//             let mut skip = 0;
+//             while skip < bytes_read && buffer[skip] != target[0] {
+//                 skip += 1;
+//             }
+//             buffer[0] = buffer[skip];
+//             bytes_read -= skip;
+//             index = 0;
+//         }
+//     }
+//     Ok(())
 // }
+
 
 ///////////////////////
 
@@ -139,22 +201,20 @@ fn serialize_serializable<T: serde::Serialize>(a: &T) -> Vec<u8> {
         .unwrap()
 }
 
-fn get_serializer() -> bincode::config::WithOtherIntEncoding<
-    bincode::config::WithOtherEndian<bincode::DefaultOptions, bincode::config::BigEndian>,
-    bincode::config::FixintEncoding,
-> {
-    bincode::DefaultOptions::new()
-        .with_big_endian()
-        .with_fixint_encoding()
-}
+// fn get_serializer() -> bincode::config::WithOtherIntEncoding<
+//     bincode::config::WithOtherEndian<bincode::DefaultOptions, bincode::config::BigEndian>,
+//     bincode::config::FixintEncoding,
+// > {
+//     bincode::DefaultOptions::new()
+//         .with_big_endian()
+//         .with_fixint_encoding()
+// }
 
 pub async fn serialize_register_command(
     cmd: &RegisterCommand,
     writer: &mut (dyn AsyncWrite + Send + Unpin),
     hmac_key: &[u8],
 ) -> Result<(), Error> {
-    let msg_type = get_type(cmd);
-
     match cmd {
         RegisterCommand::Client(c) => {
             write_client_message(
@@ -222,11 +282,11 @@ where
     writer.write_all(&msg).await
 }
 
-async fn write_all_2<T: Serialize>(
-    writer: &mut (dyn AsyncWrite + Send + Unpin),
-    content: &T,
-    hmac_key: &[u8],
-) -> Result<(), Error> {
-    let serialized: Vec<u8> = get_serializer().serialize(content).unwrap();
-    writer.write_all(&serialized).await
-}
+// async fn write_all_2<T: Serialize>(
+//     writer: &mut (dyn AsyncWrite + Send + Unpin),
+//     content: &T,
+//     hmac_key: &[u8],
+// ) -> Result<(), Error> {
+//     let serialized: Vec<u8> = get_serializer().serialize(content).unwrap();
+//     writer.write_all(&serialized).await
+// }
