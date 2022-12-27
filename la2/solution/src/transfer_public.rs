@@ -10,15 +10,15 @@ use hmac::{Hmac, Mac};
 use serde::Serialize;
 use sha2::Sha256;
 use std::io::Error;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 
 pub async fn deserialize_register_command(
     data: &mut (dyn AsyncRead + Send + Unpin),
     _hmac_system_key: &[u8; 64],
     _hmac_client_key: &[u8; 32],
 ) -> Result<(RegisterCommand, bool), Error> {
-    
-    read_magic_number(data).await?;
+    let mut buff_reader = BufReader::new(data);
+    read_magic_number(&mut buff_reader).await?;
 
     todo!()
     // return Err(Error::new(ErrorKind::Other, "oh no!"));
@@ -29,42 +29,24 @@ pub async fn deserialize_register_command(
 async fn read_magic_number(
     data: &mut (dyn AsyncRead + Send + Unpin),
 ) -> Result<(), Error> {
-    let expected_bytes: [u8; 4] = MAGIC_NUMBER;
-    let find_next_index_value = |buf: &mut [u8; 4], matching: usize| -> usize {
-        let start_index_in_buf = if expected_bytes[0] == buf[3] {
-            3
-        } else if matching < 3 && buf[2] == expected_bytes[0] {
-            2
-        } else if matching < 2 && buf[1] == expected_bytes[0] {
+    const n: usize = 4;
+
+    let expected_bytes: [u8; n] = MAGIC_NUMBER;
+
+    let mut buf: [u8; n] = [0; n];
+    let mut index = 0;
+    loop {
+        if index == n {
+            return Ok(())
+        }
+        data.read_exact(&mut buf[index..(index + 1)]).await?;
+        index = if buf[index] == expected_bytes[index] {
+            index + 1
+        } else if buf[index] == expected_bytes[0] {
             1
         } else {
             0
         };
-
-        let sequence_end_in_expected = expected_bytes.len() - start_index_in_buf;
-        let index = if start_index_in_buf > 0 && expected_bytes[1..sequence_end_in_expected].eq(&buf[(start_index_in_buf + 1)..]) {
-            sequence_end_in_expected           
-        } else {
-            0
-        };
-    
-        buf[0..index].copy_from_slice(&expected_bytes[0..index]);
-        index
-    };
-
-
-    let mut buf: [u8; 4] = [0; 4];
-    let index = 0;
-    loop {
-        data.read_exact(&mut buf[index..]).await?;
-        let mut matching = index;
-        while matching < 4 && expected_bytes[matching] == buf[index] {
-            matching = matching + 1;
-        }
-        if matching == 4 {
-            return Ok(());
-        }
-        find_next_index_value(&mut buf, matching);
     }
 }
 
