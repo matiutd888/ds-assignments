@@ -19,13 +19,16 @@ pub async fn deserialize_register_command(
 ) -> Result<(RegisterCommand, bool), Error> {
     let mut buff_reader = BufReader::new(data);
     read_magic_number(&mut buff_reader).await?;
-
+    let mut pre_type_bytes: [u8; 3] = [0; 3];
+    buff_reader.read_exact(&mut pre_type_bytes).await?;
+    let msg_type = buff_reader.read_u8().await?;
+    match msg_type {
+        todo!()
+    };
     todo!()
     // return Err(Error::new(ErrorKind::Other, "oh no!"));
 }
 
-
-// This function is terrible :)
 async fn read_magic_number(
     data: &mut (dyn AsyncRead + Send + Unpin),
 ) -> Result<(), Error> {
