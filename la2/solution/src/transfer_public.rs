@@ -1,37 +1,250 @@
 use crate::{
-    constants::{self, MsgType},
-    ClientRegisterCommand, ClientRegisterCommandContent, RegisterCommand, SectorVec,
-    SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, MAGIC_NUMBER,
+    constants::{self, MsgType, SECTOR_SIZE_BYTES},
+    ClientCommandHeader, ClientRegisterCommand, ClientRegisterCommandContent, RegisterCommand,
+    SectorVec, SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, Timestamp,
+    WriteRank, MAGIC_NUMBER,
 };
+
 use bincode::Options;
 
 use bytes::Buf;
 use hmac::{Hmac, Mac};
 use serde::Serialize;
 use sha2::Sha256;
-use std::io::Error;
+use std::io::{BufRead, Error, ErrorKind, Read};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use uuid::Uuid;
+
+type AsyncReadSendUnpin = (dyn AsyncRead + Send + Unpin);
 
 pub async fn deserialize_register_command(
-    data: &mut (dyn AsyncRead + Send + Unpin),
-    _hmac_system_key: &[u8; 64],
+    data: &mut AsyncReadSendUnpin,
+    hmac_system_key: &[u8; 64],
     _hmac_client_key: &[u8; 32],
 ) -> Result<(RegisterCommand, bool), Error> {
+    async fn read_hmac_tag(
+        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+    ) -> Result<[u8; 64], Error> {
+        let mut hmac_buffer: [u8; 64] = [0; 64];
+        async_read.read_exact(&mut hmac_buffer).await?;
+        Ok(hmac_buffer)
+    }
+
     let mut buff_reader = BufReader::new(data);
-    read_magic_number(&mut buff_reader).await?;
-    let mut pre_type_bytes: [u8; 3] = [0; 3];
-    buff_reader.read_exact(&mut pre_type_bytes).await?;
-    let msg_type = buff_reader.read_u8().await?;
-    match msg_type {
-        todo!()
-    };
-    todo!()
+    loop {
+        read_magic_number(&mut buff_reader).await?;
+        let mut pre_type_bytes: [u8; 3] = [0; 3];
+        buff_reader.read_exact(&mut pre_type_bytes).await?;
+        let msg_type = buff_reader.read_u8().await?;
+
+        let mut initial_content = Vec::new();
+        initial_content.extend(&MAGIC_NUMBER);
+        initial_content.extend(&pre_type_bytes);
+        initial_content.push(msg_type);
+
+        match msg_type {
+            0x1 | 0x2 => {
+                let mut c = ClientCommandReader {
+                    msg_type,
+                    content: initial_content,
+                };
+                let command = RegisterCommand::Client(c.read_client_command(&mut buff_reader).await?);
+                let tag = read_hmac_tag(&mut buff_reader).await?;
+                return Ok((command, verify_hmac_tag(&tag, &c.content, _hmac_client_key)))
+            }
+            0x3..=0x6 => {
+                let mut s = SystemCommandReader {
+                    msg_type,
+                    process_rank: pre_type_bytes[2],
+                    content: initial_content,
+                };
+                let command =
+                    RegisterCommand::System(s.read_system_command(&mut buff_reader).await?);
+                let tag = read_hmac_tag(&mut buff_reader).await?;
+                return Ok((command, verify_hmac_tag(&tag, &s.content, hmac_system_key)));
+            }
+            _ => {
+                log::warn!("Unexpected message type! {}", msg_type);
+            }
+        };
+    }
     // return Err(Error::new(ErrorKind::Other, "oh no!"));
 }
 
-async fn read_magic_number(
-    data: &mut (dyn AsyncRead + Send + Unpin),
-) -> Result<(), Error> {
+struct ClientCommandReader {
+    msg_type: u8,
+    content: Vec<u8>,
+}
+
+impl ClientCommandReader {
+    pub async fn read_client_command(
+        &mut self,
+        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+    ) -> Result<ClientRegisterCommand, Error> {
+        let header: ClientCommandHeader = self.read_header(async_read).await?;
+        let content: ClientRegisterCommandContent = self.read_content(async_read).await?;
+        Ok(ClientRegisterCommand { header, content })
+    }
+
+    async fn read_header(
+        &mut self,
+        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+    ) -> Result<ClientCommandHeader, Error> {
+        let mut header_buf: [u8; 16] = [0; 16];
+        async_read.read_exact(&mut header_buf).await?;
+
+        let request_number = u64::custom_deserialize(&header_buf[0..8])?;
+        let sector_index = u64::custom_deserialize(&header_buf[0..])?;
+        self.content.extend(header_buf);
+        Ok(ClientCommandHeader {
+            request_identifier: request_number,
+            sector_idx: sector_index,
+        })
+    }
+
+    async fn read_nonempty_content(
+        &mut self,
+        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+    ) -> Result<SectorVec, Error> {
+        let mut content_buf: [u8; constants::SECTOR_SIZE_BYTES] = [0; constants::SECTOR_SIZE_BYTES];
+
+        async_read.read_exact(&mut content_buf).await?;
+
+        let sector_vec: SectorVec = SectorVec(Vec::from(content_buf.clone()));
+
+        self.content.extend(content_buf);
+        Ok(sector_vec)
+    }
+
+    async fn read_content(
+        &mut self,
+        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+    ) -> Result<ClientRegisterCommandContent, Error> {
+        match self.msg_type {
+            0x1 => Ok(ClientRegisterCommandContent::Read),
+            0x2 => Ok(ClientRegisterCommandContent::Write {
+                data: self.read_nonempty_content(async_read).await?,
+            }),
+            _ => Err(Error::new(ErrorKind::Other, "Invalid message type")),
+        }
+    }
+}
+
+struct SystemCommandReader {
+    msg_type: u8,
+    process_rank: u8,
+    content: Vec<u8>,
+}
+
+fn verify_hmac_tag(tag: &[u8], content: &Vec<u8>, secret_key: &[u8]) -> bool {
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret_key).unwrap();
+
+    // Calculate MAC for the data (one can provide it in multiple portions):
+    mac.update(content);
+
+    // Verify the tag:
+    mac.verify_slice(tag).is_ok()
+}
+
+impl SystemCommandReader {
+    pub async fn read_system_command(
+        &mut self,
+        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+    ) -> Result<SystemRegisterCommand, Error> {
+        let header: SystemCommandHeader = self.read_header(async_read).await?;
+        let content: SystemRegisterCommandContent = self.read_content(async_read).await?;
+        Ok(SystemRegisterCommand { header, content })
+    }
+
+    async fn read_header(
+        &mut self,
+        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+    ) -> Result<SystemCommandHeader, Error> {
+        let mut header_buf: [u8; 32] = [0; 32];
+
+        async_read.read(&mut header_buf).await?;
+        let uuid = Uuid::custom_deserialize(&header_buf[0..16])?;
+        let rid = u64::custom_deserialize(&header_buf[16..24])?;
+        let sector_idx = u64::custom_deserialize(&header_buf[24..32])?;
+
+        self.content.extend(header_buf);
+        Ok(SystemCommandHeader {
+            process_identifier: self.process_rank,
+            msg_ident: uuid,
+            read_ident: rid,
+            sector_idx: sector_idx,
+        })
+    }
+
+    async fn read_nonempty_content(
+        &mut self,
+        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+    ) -> Result<(Timestamp, WriteRank, SectorVec), Error> {
+        const CONTENT_BUF_SIZE: usize = 8 + 7 + 1 + constants::SECTOR_SIZE_BYTES;
+        let mut content_buf: [u8; CONTENT_BUF_SIZE] = [0; CONTENT_BUF_SIZE];
+
+        async_read.read_exact(&mut content_buf).await?;
+
+        let timestamp = Timestamp::custom_deserialize(&content_buf[0..8])?;
+        let write_rank = u8::custom_deserialize(&content_buf[15..16])?;
+
+        let mut sector_data: [u8; SECTOR_SIZE_BYTES] = [0; SECTOR_SIZE_BYTES];
+        sector_data.clone_from_slice(&content_buf[16..(16 + SECTOR_SIZE_BYTES)]);
+
+        self.content.extend(content_buf);
+        Ok((timestamp, write_rank, SectorVec(Vec::from(sector_data))))
+    }
+
+    async fn read_content(
+        &mut self,
+        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+    ) -> Result<SystemRegisterCommandContent, Error> {
+        match self.msg_type {
+            0x3 => Ok(SystemRegisterCommandContent::ReadProc),
+            0x4 => {
+                let (ts, wr, v) = self.read_nonempty_content(async_read).await?;
+                Ok(SystemRegisterCommandContent::Value {
+                    timestamp: ts,
+                    write_rank: wr,
+                    sector_data: v,
+                })
+            }
+            0x5 => {
+                let (ts, wr, v) = self.read_nonempty_content(async_read).await?;
+                Ok(SystemRegisterCommandContent::WriteProc {
+                    timestamp: ts,
+                    write_rank: wr,
+                    data_to_write: v,
+                })
+            }
+            0x6 => Ok(SystemRegisterCommandContent::Ack),
+            _ => Err(Error::new(ErrorKind::Other, "Invalid message type")),
+        }
+    }
+}
+
+trait CustomDeserialize<T> {
+    fn custom_deserialize(data: &[u8]) -> Result<T, Error>;
+}
+
+impl<T: for<'a> serde::Deserialize<'a>> CustomDeserialize<T> for T {
+    fn custom_deserialize(data: &[u8]) -> Result<T, Error> {
+        let res = bincode::DefaultOptions::new()
+            .with_big_endian()
+            .with_fixint_encoding()
+            .deserialize::<T>(data);
+        match res {
+            Ok(ok) => Ok::<T, Error>(ok),
+            Err(error) => Err(Error::new(ErrorKind::Other, error)),
+        }
+    }
+}
+
+fn read_system_command(msg_type: u8, process_rank: u8) -> Result<RegisterCommand, Error> {
+    todo!()
+}
+
+async fn read_magic_number(data: &mut (dyn AsyncRead + Send + Unpin)) -> Result<(), Error> {
     const n: usize = 4;
 
     let expected_bytes: [u8; n] = MAGIC_NUMBER;
@@ -40,7 +253,7 @@ async fn read_magic_number(
     let mut index = 0;
     loop {
         if index == n {
-            return Ok(())
+            return Ok(());
         }
         data.read_exact(&mut buf[index..(index + 1)]).await?;
         index = if buf[index] == expected_bytes[index] {
@@ -52,36 +265,6 @@ async fn read_magic_number(
         };
     }
 }
-
-// fn read_until_4_bytes<R: Read>(reader: &mut R) -> io::Result<()> {
-//     let target = [0x61, 0x74, 0x64, 0x64];
-//     let mut buffer = [0; 4];
-//     let mut bytes_read = 0;
-//     let mut index = 0;
-//     while index < 4 {
-//         let n = reader.read(&mut buffer[bytes_read..])?;
-//         if n == 0 {
-//             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "failed to read 4 bytes"));
-//         }
-//         bytes_read += n;
-//         while index < 4 && buffer[index] == target[index] {
-//             index += 1;
-//         }
-//         if index < 4 {
-//             let mut skip = 0;
-//             while skip < bytes_read && buffer[skip] != target[0] {
-//                 skip += 1;
-//             }
-//             buffer[0] = buffer[skip];
-//             bytes_read -= skip;
-//             index = 0;
-//         }
-//     }
-//     Ok(())
-// }
-
-
-///////////////////////
 
 trait CustomSerializable {
     fn custom_serialize(&self, buffer: Vec<u8>) -> Vec<u8>;
@@ -109,7 +292,7 @@ impl CustomSerializable for SectorVec {
             self.0.len() == constants::SECTOR_SIZE_BYTES,
             "Data length should be equal to sector size!"
         );
-        buffer.extend(self.0.clone());
+        buffer.extend(self.0.iter());
         buffer
     }
 }
@@ -148,7 +331,6 @@ impl CustomSerializable for SystemRegisterCommandContent {
 
 impl CustomSerializable for SystemCommandHeader {
     fn custom_serialize(&self, mut buffer: Vec<u8>) -> Vec<u8> {
-        buffer = self.msg_ident.custom_serialize(buffer);
         buffer = self.msg_ident.custom_serialize(buffer);
         buffer = self.read_ident.custom_serialize(buffer);
         buffer = self.sector_idx.custom_serialize(buffer);
@@ -260,10 +442,6 @@ where
     msg = content.custom_serialize(msg);
     let tag = calculate_hmac_tag(&msg, &hmac_key);
     msg.extend(tag);
-    msg.extend(tag);
-    msg.extend(tag);
-    msg.extend(tag);
-
     writer.write_all(&msg).await
 }
 
