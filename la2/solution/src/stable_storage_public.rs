@@ -7,9 +7,6 @@ use tokio::{
     fs::{self, rename, File},
     io::AsyncWriteExt,
 };
-// You can add here other imports from std or crates listed in Cargo.toml.
-
-// You can add any private types, structs, consts, functions, methods, etc., you need.
 
 #[async_trait::async_trait]
 pub trait StableStorage: Send + Sync {
@@ -36,9 +33,9 @@ pub async fn build_stable_storage(root_storage_dir: PathBuf) -> Box<dyn StableSt
     })
 }
 
+// TODO write cleanup function
 struct StableStorageImpl {
     root_storage_dir: PathBuf,
-    // mutex_guard: Mutex<()>,
 }
 
 impl StableStorageImpl {
