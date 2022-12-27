@@ -207,7 +207,12 @@ struct AtomicHandler {
 }
 
 impl AtomicHandler {
-    const CHANNEL_SIZE: usize = 2137;
+    const SYSTEM_CHANNEL_SIZE: usize = 2137;
+    
+    // TODO think about making it 1.
+    // Since one atomic register can execute only one operation at a time (for a given sector), 
+    // the operations shall be queued. We suggest using a TCP buffer itself as the queue
+    const CLIENT_CHANNEL_SIZE: usize = 4;
 
     fn create_atomic_handler(n_sectors: u64) -> AtomicHandler {
         let n_atomic_registers = constants::N_ATOMIC_REGISTERS as usize;
@@ -223,8 +228,8 @@ impl AtomicHandler {
             Vec::with_capacity(n_atomic_registers);
 
         for _ in 0..n_atomic_registers {
-            let (s_s, r_s) = channel::<SystemAtomicRegisterTaskCommand>(Self::CHANNEL_SIZE);
-            let (s_c, r_c) = channel::<ClientAtomicRegisterTaskCommand>(Self::CHANNEL_SIZE);
+            let (s_s, r_s) = channel::<SystemAtomicRegisterTaskCommand>(Self::SYSTEM_CHANNEL_SIZE);
+            let (s_c, r_c) = channel::<ClientAtomicRegisterTaskCommand>(1);
             client_senders.push(s_c);
             system_senders.push(s_s);
 

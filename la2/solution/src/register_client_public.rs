@@ -8,7 +8,7 @@ use tokio::{
 };
 
 use crate::{serialize_register_command, RegisterCommand, SectorIdx, SystemRegisterCommand, MySender};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::{HashMap, HashSet}, sync::Arc, time::Duration};
 
 #[async_trait::async_trait]
 /// We do not need any public implementation of this trait. It is there for use
