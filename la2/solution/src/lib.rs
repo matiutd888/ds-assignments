@@ -15,7 +15,7 @@ use std::{
 
 pub use crate::domain::*;
 pub use atomic_register_public::*;
-use register_client_public::{RegisterClient, RegisterClientImpl};
+pub use register_client_public::*;
 pub use sectors_manager_public::*;
 pub use stable_storage_public::*;
 use tokio::{
@@ -26,8 +26,10 @@ use tokio::{
 pub use transfer_public::*;
 use uuid::Uuid;
 
+use core::marker::Send as MarkerSend;
+
 #[async_trait::async_trait]
-pub trait MySender<T>: Send + Sync {
+pub trait MySender<T>: MarkerSend + Sync {
     async fn send(&self, s: T);
 }
 
@@ -118,15 +120,21 @@ impl TcpReader {
                 .await;
 
                 if let Ok((cmd, b)) = res {
-                    let atomic_task_command = match cmd {
-                        RegisterCommand::Client(c) => {
-                            AtomicRegisterTaskCommand::ClientCommand((c, s_op_success.clone()))
-                        },
-                        RegisterCommand::System(s) => {
-                            AtomicRegisterTaskCommand::SystemCommand(s)
-                        }
-                    };
-                   command_disposer.send_dispose(atomic_task_command).await;
+                    if b {
+                        let atomic_task_command = match cmd {
+                            RegisterCommand::Client(c) => {
+                                AtomicRegisterTaskCommand::ClientCommand((c, s_op_success.clone()))
+                            },
+                            RegisterCommand::System(s) => {
+                                AtomicRegisterTaskCommand::SystemCommand(s)
+                            }
+                        };
+                        command_disposer.send_dispose(atomic_task_command).await;
+                    } else {
+                       todo!()
+                    }
+
+                    
                 } else {
                     log::debug!("Error while deserialize");
                 }
@@ -229,7 +237,7 @@ impl AtomicHandler {
 
         for _ in 0..n_atomic_registers {
             let (s_s, r_s) = channel::<SystemAtomicRegisterTaskCommand>(Self::SYSTEM_CHANNEL_SIZE);
-            let (s_c, r_c) = channel::<ClientAtomicRegisterTaskCommand>(1);
+            let (s_c, r_c) = channel::<ClientAtomicRegisterTaskCommand>(Self::CLIENT_CHANNEL_SIZE);
             client_senders.push(s_c);
             system_senders.push(s_s);
 

@@ -8,7 +8,7 @@ use tokio::{
 };
 
 use crate::{serialize_register_command, RegisterCommand, SectorIdx, SystemRegisterCommand, MySender};
-use std::{collections::{HashMap, HashSet}, sync::Arc, time::Duration};
+use std::{collections::{HashMap}, sync::Arc, time::Duration};
 
 #[async_trait::async_trait]
 /// We do not need any public implementation of this trait. It is there for use
@@ -35,7 +35,6 @@ pub struct Send {
 pub struct RegisterClientImpl {
     // TODO Add updating list of processes we need to rebroadcast to
     to_rebroadcast: Arc<RwLock<HashMap<SectorIdx, Broadcast>>>,
-    // TODO think about changing those into bounded Senders
     self_sender: Arc<dyn MySender<SystemRegisterCommand>>,
     tcp_sender: Sender<Send>,
     self_rank: u8,

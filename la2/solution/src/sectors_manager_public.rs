@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
+
 use tokio::fs::{self, rename, File};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
@@ -55,7 +56,10 @@ pub fn build_sectors_manager(path: PathBuf) -> Arc<dyn SectorsManager> {
     })
 }
 
-type Metadata = (u64, u8);
+pub type Timestamp = u64;
+pub type WriteRank = u8;
+
+pub type Metadata = (Timestamp, WriteRank);
 
 struct SectorsManagerImpl {
     sectors_metadata: RwLock<HashMap<SectorIdx, Metadata>>,

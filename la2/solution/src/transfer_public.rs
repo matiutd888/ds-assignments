@@ -7,11 +7,10 @@ use crate::{
 
 use bincode::Options;
 
-use bytes::Buf;
+
 use hmac::{Hmac, Mac};
-use serde::Serialize;
 use sha2::Sha256;
-use std::io::{BufRead, Error, ErrorKind, Read};
+use std::io::{Error, ErrorKind};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
@@ -138,11 +137,7 @@ struct SystemCommandReader {
 
 fn verify_hmac_tag(tag: &[u8], content: &Vec<u8>, secret_key: &[u8]) -> bool {
     let mut mac = Hmac::<Sha256>::new_from_slice(secret_key).unwrap();
-
-    // Calculate MAC for the data (one can provide it in multiple portions):
     mac.update(content);
-
-    // Verify the tag:
     mac.verify_slice(tag).is_ok()
 }
 
@@ -240,19 +235,16 @@ impl<T: for<'a> serde::Deserialize<'a>> CustomDeserialize<T> for T {
     }
 }
 
-fn read_system_command(msg_type: u8, process_rank: u8) -> Result<RegisterCommand, Error> {
-    todo!()
-}
 
 async fn read_magic_number(data: &mut (dyn AsyncRead + Send + Unpin)) -> Result<(), Error> {
-    const n: usize = 4;
+    const N: usize = 4;
 
-    let expected_bytes: [u8; n] = MAGIC_NUMBER;
+    let expected_bytes: [u8; N] = MAGIC_NUMBER;
 
-    let mut buf: [u8; n] = [0; n];
+    let mut buf: [u8; N] = [0; N];
     let mut index = 0;
     loop {
-        if index == n {
+        if index == N {
             return Ok(());
         }
         data.read_exact(&mut buf[index..(index + 1)]).await?;
@@ -278,7 +270,7 @@ impl<T: serde::Serialize> CustomSerializable for T {
 }
 
 impl CustomSerializable for ClientRegisterCommandContent {
-    fn custom_serialize(&self, mut buffer: Vec<u8>) -> Vec<u8> {
+    fn custom_serialize(&self, buffer: Vec<u8>) -> Vec<u8> {
         match self {
             ClientRegisterCommandContent::Read => buffer,
             ClientRegisterCommandContent::Write { data } => data.custom_serialize(buffer),
@@ -292,7 +284,7 @@ impl CustomSerializable for SectorVec {
             self.0.len() == constants::SECTOR_SIZE_BYTES,
             "Data length should be equal to sector size!"
         );
-        buffer.extend(self.0.iter());
+        buffer.extend(&self.0);
         buffer
     }
 }
@@ -368,15 +360,6 @@ fn serialize_serializable<T: serde::Serialize>(a: &T) -> Vec<u8> {
         .unwrap()
 }
 
-// fn get_serializer() -> bincode::config::WithOtherIntEncoding<
-//     bincode::config::WithOtherEndian<bincode::DefaultOptions, bincode::config::BigEndian>,
-//     bincode::config::FixintEncoding,
-// > {
-//     bincode::DefaultOptions::new()
-//         .with_big_endian()
-//         .with_fixint_encoding()
-// }
-
 pub async fn serialize_register_command(
     cmd: &RegisterCommand,
     writer: &mut (dyn AsyncWrite + Send + Unpin),
@@ -444,12 +427,3 @@ where
     msg.extend(tag);
     writer.write_all(&msg).await
 }
-
-// async fn write_all_2<T: Serialize>(
-//     writer: &mut (dyn AsyncWrite + Send + Unpin),
-//     content: &T,
-//     hmac_key: &[u8],
-// ) -> Result<(), Error> {
-//     let serialized: Vec<u8> = get_serializer().serialize(content).unwrap();
-//     writer.write_all(&serialized).await
-// }

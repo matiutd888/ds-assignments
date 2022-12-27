@@ -4,7 +4,7 @@ use crate::{
     register_client_public, ClientCommandHeader, ClientRegisterCommand,
     ClientRegisterCommandContent, OperationSuccess, RegisterClient, SectorIdx, SectorVec,
     SectorsManager, StableStorage, SystemCommandHeader, SystemRegisterCommand,
-    SystemRegisterCommandContent,
+    SystemRegisterCommandContent, Timestamp, WriteRank, Metadata,
 };
 
 use std::collections::{HashMap, HashSet};
@@ -13,8 +13,6 @@ use std::future::Future;
 use std::mem;
 use std::pin::Pin;
 use std::sync::Arc;
-
-// TODO Store highest VALUE in metadata (disk) and highest metadata in memory
 
 #[async_trait::async_trait]
 pub trait AtomicRegister: Send + Sync {
@@ -40,10 +38,6 @@ pub trait AtomicRegister: Send + Sync {
     async fn system_command(&mut self, cmd: SystemRegisterCommand);
 }
 
-type Timestamp = u64;
-type WriteRank = u8;
-
-type Metadata = (Timestamp, WriteRank);
 
 type SuccessCallback =
     dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync;
@@ -331,7 +325,6 @@ impl AtomicRegisterImpl {
 
                 algorithm_val.update_highest(m_timestamp, m_wr, m_val);
 
-                // TODO dokończyć to - zapisać readlist, wysłać broadcast
                 let mut highest: Option<(Timestamp, WriteRank, SectorVec)> = None;
                 mem::swap(&mut highest, &mut algorithm_val.highest);
 
