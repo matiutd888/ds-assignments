@@ -6,7 +6,6 @@ mod reversible_stable_storage_public;
 mod sectors_manager_public;
 mod stable_storage_public;
 mod transfer_public;
-mod transport;
 
 use std::{
     path::PathBuf,

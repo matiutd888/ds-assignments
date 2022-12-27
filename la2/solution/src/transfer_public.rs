@@ -14,15 +14,13 @@ use std::io::{Error, ErrorKind};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
-type AsyncReadSendUnpin = (dyn AsyncRead + Send + Unpin);
-
 pub async fn deserialize_register_command(
-    data: &mut AsyncReadSendUnpin,
+    data: &mut (dyn AsyncRead + Send + Unpin),
     hmac_system_key: &[u8; 64],
     _hmac_client_key: &[u8; 32],
 ) -> Result<(RegisterCommand, bool), Error> {
     async fn read_hmac_tag(
-        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
     ) -> Result<[u8; 64], Error> {
         let mut hmac_buffer: [u8; 64] = [0; 64];
         async_read.read_exact(&mut hmac_buffer).await?;
@@ -67,7 +65,6 @@ pub async fn deserialize_register_command(
             }
         };
     }
-    // return Err(Error::new(ErrorKind::Other, "oh no!"));
 }
 
 struct ClientCommandReader {
@@ -78,7 +75,7 @@ struct ClientCommandReader {
 impl ClientCommandReader {
     pub async fn read_client_command(
         &mut self,
-        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
     ) -> Result<ClientRegisterCommand, Error> {
         let header: ClientCommandHeader = self.read_header(async_read).await?;
         let content: ClientRegisterCommandContent = self.read_content(async_read).await?;
@@ -87,7 +84,7 @@ impl ClientCommandReader {
 
     async fn read_header(
         &mut self,
-        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
     ) -> Result<ClientCommandHeader, Error> {
         let mut header_buf: [u8; 16] = [0; 16];
         async_read.read_exact(&mut header_buf).await?;
@@ -103,7 +100,7 @@ impl ClientCommandReader {
 
     async fn read_nonempty_content(
         &mut self,
-        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
     ) -> Result<SectorVec, Error> {
         let mut content_buf: [u8; constants::SECTOR_SIZE_BYTES] = [0; constants::SECTOR_SIZE_BYTES];
 
@@ -117,7 +114,7 @@ impl ClientCommandReader {
 
     async fn read_content(
         &mut self,
-        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
     ) -> Result<ClientRegisterCommandContent, Error> {
         match self.msg_type {
             0x1 => Ok(ClientRegisterCommandContent::Read),
@@ -144,7 +141,7 @@ fn verify_hmac_tag(tag: &[u8], content: &Vec<u8>, secret_key: &[u8]) -> bool {
 impl SystemCommandReader {
     pub async fn read_system_command(
         &mut self,
-        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
     ) -> Result<SystemRegisterCommand, Error> {
         let header: SystemCommandHeader = self.read_header(async_read).await?;
         let content: SystemRegisterCommandContent = self.read_content(async_read).await?;
@@ -153,7 +150,7 @@ impl SystemCommandReader {
 
     async fn read_header(
         &mut self,
-        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
     ) -> Result<SystemCommandHeader, Error> {
         let mut header_buf: [u8; 32] = [0; 32];
 
@@ -173,7 +170,7 @@ impl SystemCommandReader {
 
     async fn read_nonempty_content(
         &mut self,
-        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
     ) -> Result<(Timestamp, WriteRank, SectorVec), Error> {
         const CONTENT_BUF_SIZE: usize = 8 + 7 + 1 + constants::SECTOR_SIZE_BYTES;
         let mut content_buf: [u8; CONTENT_BUF_SIZE] = [0; CONTENT_BUF_SIZE];
@@ -192,7 +189,7 @@ impl SystemCommandReader {
 
     async fn read_content(
         &mut self,
-        async_read: &mut BufReader<&mut AsyncReadSendUnpin>,
+        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
     ) -> Result<SystemRegisterCommandContent, Error> {
         match self.msg_type {
             0x3 => Ok(SystemRegisterCommandContent::ReadProc),
