@@ -5,9 +5,6 @@ use crate::{
     WriteRank, MAGIC_NUMBER,
 };
 
-use bincode::Options;
-
-
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::io::{Error, ErrorKind};
@@ -21,8 +18,8 @@ pub async fn deserialize_register_command(
 ) -> Result<(RegisterCommand, bool), Error> {
     async fn read_hmac_tag(
         async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
-    ) -> Result<[u8; 64], Error> {
-        let mut hmac_buffer: [u8; 64] = [0; 64];
+    ) -> Result<[u8; 32], Error> {
+        let mut hmac_buffer: [u8; 32] = [0; 32];
         async_read.read_exact(&mut hmac_buffer).await?;
         Ok(hmac_buffer)
     }
@@ -45,9 +42,11 @@ pub async fn deserialize_register_command(
                     msg_type,
                     content: initial_content,
                 };
-                let command = RegisterCommand::Client(c.read_client_command(&mut buff_reader).await?);
+                let command =
+                    RegisterCommand::Client(c.read_client_command(&mut buff_reader).await?);
                 let tag = read_hmac_tag(&mut buff_reader).await?;
-                return Ok((command, verify_hmac_tag(&tag, &c.content, _hmac_client_key)))
+                println!("hmac read");
+                return Ok((command, verify_hmac_tag(&tag, &c.content, _hmac_client_key)));
             }
             0x3..=0x6 => {
                 let mut s = SystemCommandReader {
@@ -57,7 +56,8 @@ pub async fn deserialize_register_command(
                 };
                 let command =
                     RegisterCommand::System(s.read_system_command(&mut buff_reader).await?);
-                let tag = read_hmac_tag(&mut buff_reader).await?;
+                    let tag = read_hmac_tag(&mut buff_reader).await?;
+                    println!("hmac read");
                 return Ok((command, verify_hmac_tag(&tag, &s.content, hmac_system_key)));
             }
             _ => {
@@ -79,6 +79,7 @@ impl ClientCommandReader {
     ) -> Result<ClientRegisterCommand, Error> {
         let header: ClientCommandHeader = self.read_header(async_read).await?;
         let content: ClientRegisterCommandContent = self.read_content(async_read).await?;
+        println!("content and header parsed correctly");
         Ok(ClientRegisterCommand { header, content })
     }
 
@@ -90,8 +91,9 @@ impl ClientCommandReader {
         async_read.read_exact(&mut header_buf).await?;
 
         let request_number = u64::custom_deserialize(&header_buf[0..8])?;
-        let sector_index = u64::custom_deserialize(&header_buf[0..])?;
+        let sector_index = u64::custom_deserialize(&header_buf[8..])?;
         self.content.extend(header_buf);
+        println!("header parsed correctly! {}", self.msg_type);
         Ok(ClientCommandHeader {
             request_identifier: request_number,
             sector_idx: sector_index,
@@ -144,7 +146,9 @@ impl SystemCommandReader {
         async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
     ) -> Result<SystemRegisterCommand, Error> {
         let header: SystemCommandHeader = self.read_header(async_read).await?;
+        println!("header read correctly");
         let content: SystemRegisterCommandContent = self.read_content(async_read).await?;
+        println!("content read correctly");
         Ok(SystemRegisterCommand { header, content })
     }
 
@@ -219,19 +223,25 @@ trait CustomDeserialize<T> {
     fn custom_deserialize(data: &[u8]) -> Result<T, Error>;
 }
 
-impl<T: for<'a> serde::Deserialize<'a>> CustomDeserialize<T> for T {
-    fn custom_deserialize(data: &[u8]) -> Result<T, Error> {
-        let res = bincode::DefaultOptions::new()
-            .with_big_endian()
-            .with_fixint_encoding()
-            .deserialize::<T>(data);
-        match res {
-            Ok(ok) => Ok::<T, Error>(ok),
-            Err(error) => Err(Error::new(ErrorKind::Other, error)),
-        }
+impl CustomDeserialize<u8> for u8 {
+    fn custom_deserialize(data: &[u8]) -> Result<u8, Error> {
+        assert!(data.len() == 1);
+        Ok(data[0])
     }
 }
 
+impl CustomDeserialize<u64> for u64 {
+    fn custom_deserialize(data: &[u8]) -> Result<u64, Error> {
+        assert!(data.len() == 8);
+        Ok(u64::from_be_bytes(data[0..8].try_into().unwrap()))
+    }
+}
+
+impl CustomDeserialize<Uuid> for Uuid {
+    fn custom_deserialize(data: &[u8]) -> Result<Uuid, Error> {
+        Ok(Uuid::from_bytes(data.try_into().unwrap()))
+    }
+}
 
 async fn read_magic_number(data: &mut (dyn AsyncRead + Send + Unpin)) -> Result<(), Error> {
     const N: usize = 4;
@@ -259,9 +269,23 @@ trait CustomSerializable {
     fn custom_serialize(&self, buffer: Vec<u8>) -> Vec<u8>;
 }
 
-impl<T: serde::Serialize> CustomSerializable for T {
+impl CustomSerializable for u8 {
     fn custom_serialize(&self, mut buffer: Vec<u8>) -> Vec<u8> {
-        buffer.extend(serialize_serializable(self));
+        buffer.extend(self.to_be_bytes());
+        buffer
+    }
+}
+
+impl CustomSerializable for u64 {
+    fn custom_serialize(&self, mut buffer: Vec<u8>) -> Vec<u8> {
+        buffer.extend(self.to_be_bytes());
+        buffer
+    }
+}
+
+impl CustomSerializable for Uuid {
+    fn custom_serialize(&self, mut buffer: Vec<u8>) -> Vec<u8> {
+        buffer.extend(self.as_bytes());
         buffer
     }
 }
@@ -308,7 +332,10 @@ impl CustomSerializable for SystemRegisterCommandContent {
                 write_rank,
                 data_to_write,
             } => {
+                let padding = [0; 7];
+
                 buffer = timestamp.custom_serialize(buffer);
+                buffer.extend(padding);
                 buffer = write_rank.custom_serialize(buffer);
                 buffer = data_to_write.custom_serialize(buffer);
                 buffer
@@ -327,6 +354,14 @@ impl CustomSerializable for SystemCommandHeader {
     }
 }
 
+impl CustomSerializable for ClientCommandHeader {
+    fn custom_serialize(&self, mut buffer: Vec<u8>) -> Vec<u8> {
+        buffer = self.request_identifier.custom_serialize(buffer);
+        buffer = self.sector_idx.custom_serialize(buffer);
+        buffer
+    }
+}
+
 fn get_type(r: &RegisterCommand) -> MsgType {
     fn get_type_client(c: &ClientRegisterCommand) -> MsgType {
         match c.content {
@@ -339,7 +374,7 @@ fn get_type(r: &RegisterCommand) -> MsgType {
         match s.content {
             SystemRegisterCommandContent::ReadProc => constants::TYPE_READ_PROC,
             SystemRegisterCommandContent::Value { .. } => constants::TYPE_VALUE,
-            SystemRegisterCommandContent::WriteProc { .. } => constants::TYPE_WRITE,
+            SystemRegisterCommandContent::WriteProc { .. } => constants::TYPE_WRITE_PROC,
             SystemRegisterCommandContent::Ack => constants::TYPE_ACK,
         }
     }
@@ -347,14 +382,6 @@ fn get_type(r: &RegisterCommand) -> MsgType {
         RegisterCommand::Client(c) => get_type_client(&c),
         RegisterCommand::System(s) => get_type_system(&s),
     }
-}
-
-fn serialize_serializable<T: serde::Serialize>(a: &T) -> Vec<u8> {
-    bincode::DefaultOptions::new()
-        .with_big_endian()
-        .with_fixint_encoding()
-        .serialize(a)
-        .unwrap()
 }
 
 pub async fn serialize_register_command(
@@ -376,10 +403,11 @@ pub async fn serialize_register_command(
         }
 
         RegisterCommand::System(s) => {
+            println!("Received system command ");
             let padding: Vec<u8> = [0; 2].to_vec();
             let mut pre_header = Vec::new();
-            pre_header.extend(s.header.process_identifier.to_be_bytes());
             pre_header.extend(padding);
+            pre_header.extend(s.header.process_identifier.to_be_bytes());
 
             write_client_message(
                 writer,
@@ -414,13 +442,22 @@ where
     T: CustomSerializable,
     U: CustomSerializable,
 {
+    println!("--------------------------------------");
+    println!("serialing type {}", msg_type);
     let mut msg: Vec<u8> = vec![];
+    println!("{}", msg.len());
     msg.extend(MAGIC_NUMBER);
+    println!("{}", msg.len());
     msg.extend(pre_header);
+    println!("{}", msg.len());
     msg = msg_type.custom_serialize(msg);
+    println!("{}", msg.len());
     msg = header.custom_serialize(msg);
+    println!("{}", msg.len());
     msg = content.custom_serialize(msg);
+    println!("{}", msg.len());
     let tag = calculate_hmac_tag(&msg, &hmac_key);
     msg.extend(tag);
+    println!("{}", msg.len());
     writer.write_all(&msg).await
 }
