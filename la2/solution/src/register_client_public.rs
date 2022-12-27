@@ -33,6 +33,7 @@ pub struct Send {
 }
 
 pub struct RegisterClientImpl {
+    // TODO Add updating list of processes we need to rebroadcast to
     to_rebroadcast: Arc<RwLock<HashMap<SectorIdx, Broadcast>>>,
     // TODO think about changing those into bounded Senders
     self_sender: Arc<dyn MySender<SystemRegisterCommand>>,
