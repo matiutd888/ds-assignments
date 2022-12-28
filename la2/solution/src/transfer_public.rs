@@ -44,8 +44,7 @@ pub async fn deserialize_register_command(
                     msg_type,
                     content: initial_content,
                 };
-                let command =
-                    RegisterCommand::Client(c.read_client_command(data).await?);
+                let command = RegisterCommand::Client(c.read_client_command(data).await?);
                 let tag = read_hmac_tag(data).await?;
                 return Ok((command, verify_hmac_tag(&tag, &c.content, hmac_client_key)));
             }
@@ -55,8 +54,7 @@ pub async fn deserialize_register_command(
                     process_rank: pre_type_bytes[2],
                     content: initial_content,
                 };
-                let command =
-                    RegisterCommand::System(s.read_system_command(data).await?);
+                let command = RegisterCommand::System(s.read_system_command(data).await?);
                 let tag = read_hmac_tag(data).await?;
                 return Ok((command, verify_hmac_tag(&tag, &s.content, hmac_system_key)));
             }
