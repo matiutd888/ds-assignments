@@ -2,9 +2,9 @@ use uuid::Uuid;
 
 use crate::{
     register_client_public, ClientCommandHeader, ClientRegisterCommand,
-    ClientRegisterCommandContent, OperationSuccess, RegisterClient, SectorIdx, SectorVec,
+    ClientRegisterCommandContent, Metadata, OperationSuccess, RegisterClient, SectorIdx, SectorVec,
     SectorsManager, StableStorage, SystemCommandHeader, SystemRegisterCommand,
-    SystemRegisterCommandContent, Timestamp, WriteRank, Metadata,
+    SystemRegisterCommandContent, Timestamp, WriteRank,
 };
 
 use std::collections::{HashMap, HashSet};
@@ -37,7 +37,6 @@ pub trait AtomicRegister: Send + Sync {
     /// and ACK messages in the (N,N)-AtomicRegister algorithm.
     async fn system_command(&mut self, cmd: SystemRegisterCommand);
 }
-
 
 type SuccessCallback =
     dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync;

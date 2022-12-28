@@ -1,20 +1,23 @@
 use crate::{
     constants::{self, MsgType, SECTOR_SIZE_BYTES},
-    ClientCommandHeader, ClientRegisterCommand, ClientRegisterCommandContent, RegisterCommand,
-    SectorVec, SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, Timestamp,
-    WriteRank, MAGIC_NUMBER,
+    ClientCommandHeader, ClientRegisterCommand, ClientRegisterCommandContent, OperationReturn,
+    OperationSuccess, RegisterCommand, SectorVec, StatusCode, SystemCommandHeader,
+    SystemRegisterCommand, SystemRegisterCommandContent, Timestamp, WriteRank, MAGIC_NUMBER,
 };
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-use std::io::{Error, ErrorKind};
+use std::{
+    io::{Error, ErrorKind},
+    vec,
+};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
 pub async fn deserialize_register_command(
     data: &mut (dyn AsyncRead + Send + Unpin),
     hmac_system_key: &[u8; 64],
-    _hmac_client_key: &[u8; 32],
+    hmac_client_key: &[u8; 32],
 ) -> Result<(RegisterCommand, bool), Error> {
     async fn read_hmac_tag(
         async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
@@ -45,7 +48,7 @@ pub async fn deserialize_register_command(
                 let command =
                     RegisterCommand::Client(c.read_client_command(&mut buff_reader).await?);
                 let tag = read_hmac_tag(&mut buff_reader).await?;
-                return Ok((command, verify_hmac_tag(&tag, &c.content, _hmac_client_key)));
+                return Ok((command, verify_hmac_tag(&tag, &c.content, hmac_client_key)));
             }
             0x3..=0x6 => {
                 let mut s = SystemCommandReader {
@@ -55,7 +58,7 @@ pub async fn deserialize_register_command(
                 };
                 let command =
                     RegisterCommand::System(s.read_system_command(&mut buff_reader).await?);
-                    let tag = read_hmac_tag(&mut buff_reader).await?;
+                let tag = read_hmac_tag(&mut buff_reader).await?;
                 return Ok((command, verify_hmac_tag(&tag, &s.content, hmac_system_key)));
             }
             _ => {
@@ -356,22 +359,23 @@ impl CustomSerializable for ClientCommandHeader {
     }
 }
 
-fn get_type(r: &RegisterCommand) -> MsgType {
-    fn get_type_client(c: &ClientRegisterCommand) -> MsgType {
-        match c.content {
-            ClientRegisterCommandContent::Read => constants::TYPE_READ,
-            ClientRegisterCommandContent::Write { .. } => constants::TYPE_WRITE,
-        }
+fn get_type_client(c: &ClientRegisterCommand) -> MsgType {
+    match c.content {
+        ClientRegisterCommandContent::Read => constants::TYPE_READ,
+        ClientRegisterCommandContent::Write { .. } => constants::TYPE_WRITE,
     }
+}
 
-    fn get_type_system(s: &SystemRegisterCommand) -> MsgType {
-        match s.content {
-            SystemRegisterCommandContent::ReadProc => constants::TYPE_READ_PROC,
-            SystemRegisterCommandContent::Value { .. } => constants::TYPE_VALUE,
-            SystemRegisterCommandContent::WriteProc { .. } => constants::TYPE_WRITE_PROC,
-            SystemRegisterCommandContent::Ack => constants::TYPE_ACK,
-        }
+fn get_type_system(s: &SystemRegisterCommand) -> MsgType {
+    match s.content {
+        SystemRegisterCommandContent::ReadProc => constants::TYPE_READ_PROC,
+        SystemRegisterCommandContent::Value { .. } => constants::TYPE_VALUE,
+        SystemRegisterCommandContent::WriteProc { .. } => constants::TYPE_WRITE_PROC,
+        SystemRegisterCommandContent::Ack => constants::TYPE_ACK,
     }
+}
+
+fn get_type(r: &RegisterCommand) -> MsgType {
     match r {
         RegisterCommand::Client(c) => get_type_client(&c),
         RegisterCommand::System(s) => get_type_system(&s),
@@ -385,7 +389,7 @@ pub async fn serialize_register_command(
 ) -> Result<(), Error> {
     match cmd {
         RegisterCommand::Client(c) => {
-            write_client_message(
+            write_command(
                 writer,
                 [0; 3].to_vec(),
                 get_type(cmd),
@@ -402,7 +406,7 @@ pub async fn serialize_register_command(
             pre_header.extend(padding);
             pre_header.extend(s.header.process_identifier.to_be_bytes());
 
-            write_client_message(
+            write_command(
                 writer,
                 pre_header,
                 get_type(cmd),
@@ -423,7 +427,7 @@ fn calculate_hmac_tag(data: &[u8], secret_key: &[u8]) -> [u8; 32] {
     tag.into()
 }
 
-async fn write_client_message<T, U>(
+async fn write_command<T, U>(
     writer: &mut (dyn AsyncWrite + Send + Unpin),
     pre_header: Vec<u8>, // padding plus process rank
     msg_type: u8,
@@ -444,4 +448,124 @@ where
     let tag = calculate_hmac_tag(&msg, &hmac_key);
     msg.extend(tag);
     writer.write_all(&msg).await
+}
+
+#[derive(Debug)]
+enum OperationContent {
+    Success(OperationReturn),
+    Failed,
+}
+
+#[derive(Debug)]
+enum ClientOperationType {
+    Write,
+    Read,
+}
+
+impl ClientOperationType {
+    fn from_type(t: u8) -> Self {
+        match t {
+            constants::TYPE_READ => ClientOperationType::Read,
+            constants::TYPE_WRITE => ClientOperationType::Write,
+            _ => panic!("Invalid client operation type"),
+        }
+    }
+
+    fn to_type(&self) -> u8 {
+        match &self {
+            ClientOperationType::Write => constants::TYPE_WRITE,
+            ClientOperationType::Read => constants::TYPE_READ,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ClientCommandResponseTransfer {
+    status_code: StatusCode,
+    msg_type: ClientOperationType,
+    request_number: u64,
+    content: OperationContent,
+}
+
+impl CustomSerializable for StatusCode {
+    fn custom_serialize(&self, buffer: Vec<u8>) -> Vec<u8> {
+        let val: u8 = match &self {
+            StatusCode::Ok => 0x0,
+            StatusCode::AuthFailure => 0x1,
+            StatusCode::InvalidSectorIndex => 0x2,
+        };
+        val.custom_serialize(buffer)
+    }
+}
+
+impl CustomSerializable for ClientOperationType {
+    fn custom_serialize(&self, buffer: Vec<u8>) -> Vec<u8> {
+        let t = Self::to_type(&self);
+        (t + 0x40).custom_serialize(buffer)
+    }
+}
+
+impl CustomSerializable for OperationContent {
+    fn custom_serialize(&self, buffer: Vec<u8>) -> Vec<u8> {
+        match &self {
+            OperationContent::Success(op) => match op {
+                OperationReturn::Read(r) => r.read_data.custom_serialize(buffer),
+                OperationReturn::Write => buffer,
+            },
+            OperationContent::Failed => buffer,
+        }
+    }
+}
+
+pub async fn serialize_client_response(
+    c: &ClientCommandResponseTransfer,
+    writer: &mut (dyn AsyncWrite + Send + Unpin),
+    hmac_client_key: &[u8; 32],
+) -> Result<(), Error> {
+    let mut buffer: Vec<u8> = Vec::new();
+    buffer.extend(&MAGIC_NUMBER);
+    buffer.extend([0; 2]);
+    buffer = c.status_code.custom_serialize(buffer);
+    buffer = c.msg_type.custom_serialize(buffer);
+    buffer = c.request_number.custom_serialize(buffer);
+    buffer = c.content.custom_serialize(buffer);
+    buffer.extend(calculate_hmac_tag(&buffer, hmac_client_key));
+
+    writer.write_all(&buffer).await
+}
+
+impl ClientCommandResponseTransfer {
+    fn get_type(op: &OperationReturn) -> ClientOperationType {
+        match op {
+            OperationReturn::Read(_) => ClientOperationType::Read,
+            OperationReturn::Write => ClientOperationType::Write,
+        }
+    }
+
+    pub fn from_success(op: OperationSuccess) -> Self {
+        ClientCommandResponseTransfer {
+            status_code: StatusCode::Ok,
+            msg_type: Self::get_type(&op.op_return),
+            request_number: op.request_identifier,
+            content: OperationContent::Success(op.op_return),
+        }
+    }
+
+    pub fn from_invalid_sector_id(c: &ClientRegisterCommand) -> Self {
+        ClientCommandResponseTransfer {
+            status_code: StatusCode::InvalidSectorIndex,
+            msg_type: ClientOperationType::from_type(get_type_client(c)),
+            request_number: c.header.request_identifier,
+            content: OperationContent::Failed,
+        }
+    }
+
+    pub fn from_invalid_hmac(c: &ClientRegisterCommand) -> Self {
+        ClientCommandResponseTransfer {
+            status_code: StatusCode::AuthFailure,
+            msg_type: ClientOperationType::from_type(get_type_client(c)),
+            request_number: c.header.request_identifier,
+            content: OperationContent::Failed,
+        }
+    }
 }

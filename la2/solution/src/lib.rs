@@ -7,10 +7,7 @@ mod sectors_manager_public;
 mod stable_storage_public;
 mod transfer_public;
 
-use std::{
-    path::PathBuf,
-    sync::Arc, collections::HashSet,
-};
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 pub use crate::domain::*;
 pub use atomic_register_public::*;
@@ -18,7 +15,10 @@ pub use register_client_public::*;
 pub use sectors_manager_public::*;
 pub use stable_storage_public::*;
 use tokio::{
-    net::{tcp::OwnedWriteHalf, TcpListener, TcpStream},
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpListener, TcpStream,
+    },
     select,
     sync::mpsc::{channel, Receiver, Sender},
 };
@@ -64,6 +64,8 @@ impl TcpReader {
         reader: TcpReader,
         atomic_register_handler: Arc<AtomicRegisterCommandsDisposer>,
     ) {
+        let n_sectors = atomic_register_handler.n_sectors;
+
         // TODO think about not using arcs.
         let hmac_client_key_arc = Arc::new(reader.hmac_client_key);
         let hmac_system_key_arc = Arc::new(reader.hmac_system_key);
@@ -78,6 +80,7 @@ impl TcpReader {
                             atomic_register_handler.clone(),
                             hmac_client_key_arc.clone(),
                             hmac_system_key_arc.clone(),
+                            n_sectors,
                         )
                         .await
                     }
@@ -88,57 +91,147 @@ impl TcpReader {
         .await;
     }
 
-    async fn send_op_success(_stream: &mut OwnedWriteHalf, _op_success: OperationSuccess) {
-        todo!();
+    async fn send_client_response(
+        stream: &mut OwnedWriteHalf,
+        c: &ClientCommandResponseTransfer,
+        hmac_client_key: &[u8; 32],
+    ) -> Result<(), std::io::Error> {
+        serialize_client_response(c, stream, &hmac_client_key).await
+    }
+
+    async fn spawn_writer_task(
+        mut writer: OwnedWriteHalf,
+        mut r_op_success: Receiver<ClientCommandResponseTransfer>,
+        hmac_client_key: [u8; 32],
+    ) {
+        tokio::spawn(async move {
+            loop {
+                if let Some(op) = r_op_success.recv().await {
+                    let res = Self::send_client_response(&mut writer, &op, &hmac_client_key).await;
+                    if let Err(err) = res {
+                        log::error!("Error {} while writing client response", err);
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    async fn handle_incorrect_sector_id(
+        s: &RegisterCommand,
+        n_sectors: u64,
+        s_op_end: Sender<ClientCommandResponseTransfer>,
+    ) -> bool {
+        fn check_sector_idx(sector_idx: SectorIdx, n_sectors: u64) -> bool {
+            sector_idx < n_sectors
+        }
+
+        match s {
+            RegisterCommand::Client(c) => {
+                if !check_sector_idx(c.header.sector_idx, n_sectors) {
+                    log::error!("Invalid sector id {:?}", c.header);
+
+                    s_op_end
+                        .send(ClientCommandResponseTransfer::from_invalid_sector_id(c))
+                        .await
+                        .unwrap();
+                    true
+                } else {
+                    false
+                }
+            }
+            RegisterCommand::System(s) => {
+                if !check_sector_idx(s.header.sector_idx, n_sectors) {
+                    log::error!("Invalid sector id {:?}", s.header);
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    async fn spawn_reader_task(
+        mut reader: OwnedReadHalf,
+        hmac_client_key: [u8; 32],
+        hmac_system_key: [u8; 64],
+        command_disposer: Arc<AtomicRegisterCommandsDisposer>,
+        sender_op_end: Sender<ClientCommandResponseTransfer>,
+        n_sectors: u64,
+    ) {
+        tokio::spawn(async move {
+            loop {
+                let res =
+                    deserialize_register_command(&mut reader, &hmac_system_key, &hmac_client_key)
+                        .await;
+
+                match res {
+                    Ok((cmd, b)) => {
+                        if b {
+                            if !Self::handle_incorrect_sector_id(
+                                &cmd,
+                                n_sectors,
+                                sender_op_end.clone(),
+                            )
+                            .await
+                            {
+                                let atomic_object_message = match cmd {
+                                    RegisterCommand::Client(c) => {
+                                        AtomicRegisterTaskCommand::ClientCommand((
+                                            c,
+                                            sender_op_end.clone(),
+                                        ))
+                                    }
+                                    RegisterCommand::System(s) => {
+                                        AtomicRegisterTaskCommand::SystemCommand(s)
+                                    }
+                                };
+                                command_disposer.send_dispose(atomic_object_message).await;
+                            }
+                        } else {
+                            match cmd {
+                                RegisterCommand::Client(c) => {
+                                    log::error!("Invalid hmac in client command {:?}", c);
+                                    sender_op_end
+                                        .send(ClientCommandResponseTransfer::from_invalid_hmac(&c))
+                                        .await
+                                        .unwrap();
+                                }
+                                RegisterCommand::System(_) => {
+                                    log::error!("Invalid hmac in system command {:?}", cmd)
+                                }
+                            }
+                        }
+                    }
+                    Err(err) => log::error!("Error while deserializing {}", err),
+                }
+            }
+        })
+        .await
+        .unwrap();
     }
 
     async fn spawn_connection_task(
         stream: TcpStream,
         command_disposer: Arc<AtomicRegisterCommandsDisposer>,
-        hmac_client_key: Arc<[u8; 32]>,
-        hmac_system_key: Arc<[u8; 64]>,
+        hmac_client_key_arc: Arc<[u8; 32]>,
+        hmac_system_key_arc: Arc<[u8; 64]>,
+        n_sectors: u64,
     ) {
-        let (s_op_success, mut r_op_success) = channel::<OperationSuccess>(2137);
-        let (mut reader, mut writer) = stream.into_split();
+        let (s_op_success, r_op_success) = channel::<ClientCommandResponseTransfer>(2137);
+        let (reader, writer) = stream.into_split();
 
-        let _ = tokio::spawn(async move {
-            loop {
-                if let Some(op) = r_op_success.recv().await {
-                    Self::send_op_success(&mut writer, op).await;
-                }
-            }
-        })
-        .await;
-        let _ = tokio::spawn(async move {
-            loop {
-                let res = deserialize_register_command(
-                    &mut reader,
-                    hmac_system_key.as_ref(),
-                    hmac_client_key.as_ref(),
-                )
-                .await;
-
-                if let Ok((cmd, b)) = res {
-                    if b {
-                        let atomic_task_command = match cmd {
-                            RegisterCommand::Client(c) => {
-                                AtomicRegisterTaskCommand::ClientCommand((c, s_op_success.clone()))
-                            },
-                            RegisterCommand::System(s) => {
-                                AtomicRegisterTaskCommand::SystemCommand(s)
-                            }
-                        };
-                        command_disposer.send_dispose(atomic_task_command).await;
-                    } else {
-                       todo!()
-                    }
-
-                    
-                } else {
-                    log::debug!("Error while deserialize");
-                }
-            }
-        })
+        let hmac_client_key = hmac_client_key_arc.as_ref().clone();
+        Self::spawn_writer_task(writer, r_op_success, hmac_client_key.clone()).await;
+        Self::spawn_reader_task(
+            reader,
+            hmac_client_key,
+            hmac_system_key_arc.as_ref().clone(),
+            command_disposer,
+            s_op_success,
+            n_sectors,
+        )
         .await;
     }
 }
@@ -204,7 +297,7 @@ struct AtomicRegisterCommandsDisposer {
     client_senders: Vec<Sender<ClientAtomicRegisterTaskCommand>>,
     system_senders: Vec<Sender<SystemAtomicRegisterTaskCommand>>,
     n_atomic_registers: usize,
-    _n_sectors: u64,
+    n_sectors: u64,
 }
 
 struct AtomicHandler {
@@ -215,9 +308,9 @@ struct AtomicHandler {
 
 impl AtomicHandler {
     const SYSTEM_CHANNEL_SIZE: usize = 2137;
-    
+
     // TODO think about making it 1.
-    // Since one atomic register can execute only one operation at a time (for a given sector), 
+    // Since one atomic register can execute only one operation at a time (for a given sector),
     // the operations shall be queued. We suggest using a TCP buffer itself as the queue
     const CLIENT_CHANNEL_SIZE: usize = 4;
 
@@ -248,7 +341,7 @@ impl AtomicHandler {
             system_senders: system_senders,
             client_senders: client_senders,
             n_atomic_registers: n_atomic_registers,
-            _n_sectors: n_sectors,
+            n_sectors,
         };
 
         AtomicHandler {
@@ -282,15 +375,15 @@ impl AtomicHandler {
         )
         .await;
 
-        let _ = tokio::spawn(async move {
-            let (s, mut r_finished) = channel::<OperationSuccess>(1);
+        tokio::spawn(async move {
+            let (s, mut r_finished) = channel::<ClientCommandResponseTransfer>(1);
             let s_arc = Arc::new(s);
-            let mut current_operation_data: Option<(u64, Sender<OperationSuccess>)> = None;
+            let mut current_operation_data: Option<(u64, Sender<ClientCommandResponseTransfer>)> = None;
             let mut messages_during_current_request: HashSet<Uuid> = HashSet::new();
             loop {
                 if let Some((current_sector, success_sender)) = &current_operation_data {
                     select! {
-                        Some(cmd) = r_s.recv() => {                        
+                        Some(cmd) = r_s.recv() => {
                             if !messages_during_current_request.contains(&cmd.header.msg_ident) {
                                 messages_during_current_request.insert(cmd.header.msg_ident.clone());
                                 a.system_command(cmd).await;
@@ -311,7 +404,7 @@ impl AtomicHandler {
                             cmd,
                             Box::new(|op: OperationSuccess| {
                                 Box::pin(async move {
-                                    _ = s_cloned.send(op).await;
+                                    _ = s_cloned.send(ClientCommandResponseTransfer::from_success(op)).await;
                                 })
                             }),
                         )
@@ -320,7 +413,7 @@ impl AtomicHandler {
                 }
             }
         })
-        .await;
+        .await.unwrap();
     }
 
     pub async fn spawn_tasks(
@@ -358,7 +451,8 @@ enum AtomicRegisterTaskCommand {
 }
 
 type SystemAtomicRegisterTaskCommand = SystemRegisterCommand;
-type ClientAtomicRegisterTaskCommand = (ClientRegisterCommand, Sender<OperationSuccess>);
+type ClientAtomicRegisterTaskCommand =
+    (ClientRegisterCommand, Sender<ClientCommandResponseTransfer>);
 
 impl AtomicRegisterCommandsDisposer {
     fn get_index_from_sector(&self, sector_idx: u64) -> usize {
@@ -384,7 +478,8 @@ impl AtomicRegisterCommandsDisposer {
 #[async_trait::async_trait]
 impl MySender<SystemRegisterCommand> for AtomicRegisterCommandsDisposer {
     async fn send(&self, command: SystemRegisterCommand) {
-        self.send_dispose(AtomicRegisterTaskCommand::SystemCommand(command)).await;
+        self.send_dispose(AtomicRegisterTaskCommand::SystemCommand(command))
+            .await;
     }
 }
 

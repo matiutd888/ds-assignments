@@ -54,7 +54,7 @@
 //             }
 //         }
 //     }
-    
+
 //     Box::new(ReversibleStableStorageImpl {
 //         root_storage_dir: root_storage_dir,
 //         keys: keys,
