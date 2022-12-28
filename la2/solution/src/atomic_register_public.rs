@@ -90,10 +90,11 @@ impl Algorithm {
 }
 
 struct AtomicRegisterImpl {
+    name: String,
     rid: u64,
     // This really should always have only one element!
     // TODO change this to option
-    a: HashMap<SectorIdx, Algorithm>,
+    a: Option<Algorithm>,
     metadata: Box<dyn StableStorage>,
     register_client: Arc<dyn RegisterClient>,
     sectors_manager: Arc<dyn SectorsManager>,
@@ -102,53 +103,6 @@ struct AtomicRegisterImpl {
 }
 
 impl AtomicRegisterImpl {
-    // These methods could also be changed if we will be keeping the values in memory
-    // fn get_writeval_key(sector_idx: SectorIdx) -> String {
-    //     format!("{}-writeval", sector_idx)
-    // }
-
-    // fn get_readval_key(sector_idx: SectorIdx) -> String {
-    //     format!("{}-readval", sector_idx)
-    // }
-
-    // fn get_val_key(sector_idx: SectorIdx) -> String {
-    //     format!("{}-val", sector_idx)
-    // }
-
-    // async fn get_sector_metadata(&self, key: String) -> SectorVec {
-    //     let data = if let Some(vec) = self.metadata.get(&key).await {
-    //         assert!(vec.len() == constants::SECTOR_SIZE_BYTES);
-    //         vec
-    //     } else {
-    //         vec![0; constants::SECTOR_SIZE_BYTES]
-    //     };
-    //     SectorVec(data)
-    // }
-
-    // async fn save_writeval(&mut self, sector_idx: SectorIdx, data: SectorVec) {
-    //     self.metadata
-    //         .put(&Self::get_writeval_key(sector_idx), &data.0)
-    //         .await
-    //         .unwrap();
-    // }
-
-    // async fn save_readval(&mut self, sector_idx: SectorIdx, data: SectorVec) {
-    //     self.metadata
-    //         .put(&&Self::get_readval_key(sector_idx), &data.0)
-    //         .await
-    //         .unwrap();
-    // }
-
-    // async fn get_readval(&self, sector_idx: SectorIdx) -> SectorVec {
-    //     self.get_sector_metadata(Self::get_readval_key(sector_idx))
-    //         .await
-    // }
-
-    // async fn get_writeval(&self, sector_idx: SectorIdx) -> SectorVec {
-    //     self.get_sector_metadata(Self::get_writeval_key(sector_idx))
-    //         .await
-    // }
-
     async fn get_val(&self, sector_idx: SectorIdx) -> SectorVec {
         self.sectors_manager.read_data(sector_idx).await
     }
@@ -182,10 +136,6 @@ impl AtomicRegisterImpl {
         } else {
             0
         }
-    }
-
-    async fn remove_algorithm(&mut self, sector_idx: SectorIdx) {
-        self.a.remove(&sector_idx);
     }
 
     fn get_default_ret_header(&self, sector_idx: SectorIdx, rid: u64) -> SystemCommandHeader {
@@ -240,11 +190,18 @@ impl AtomicRegisterImpl {
         header: ClientCommandHeader,
         success_callback: Box<SuccessCallback>,
     ) {
+        log::debug!(
+            "{}, {}: NEW RID({}) READ CLIENT {}",
+            self.process_identifier,
+            self.name,
+            self.rid,
+            header.sector_idx
+        );
         self.remove_algorithm(header.sector_idx).await;
         let mut new_entry = Algorithm::new(header.request_identifier, success_callback).await;
         new_entry.reading = true;
 
-        self.a.insert(header.sector_idx, new_entry);
+        self.a = Some(new_entry);
 
         // Create system message and send to other processes
         self.broadcast_readproc(header.sector_idx).await;
@@ -256,6 +213,13 @@ impl AtomicRegisterImpl {
         success_callback: Box<SuccessCallback>,
         data: SectorVec,
     ) {
+        log::debug!(
+            "{}, {}: NEW RID({}) WRITE CLIENT {}",
+            self.process_identifier,
+            self.name,
+            self.rid,
+            header.sector_idx
+        );
         self.remove_algorithm(header.sector_idx).await;
         let mut new_entry = Algorithm::new(header.request_identifier, success_callback).await;
         new_entry.writing = true;
@@ -269,7 +233,12 @@ impl AtomicRegisterImpl {
     }
 
     async fn handle_readproc(&self, header: SystemCommandHeader) {
-        log::debug!("RID: {}, READPROC", header.read_ident);
+        log::debug!(
+            "{}, {}, rid: {}, READPROC",
+            self.process_identifier,
+            self.name,
+            header.read_ident
+        );
 
         let metadata = self.get_metadata(header.sector_idx).await;
 
@@ -304,7 +273,12 @@ impl AtomicRegisterImpl {
         write_rank: u8,
         sector_data: SectorVec,
     ) {
-        log::debug!("RID: {}, VALUE", header.read_ident);
+        log::debug!(
+            "{}, {}: rid {}, VALUE",
+            self.process_identifier,
+            self.name,
+            header.read_ident
+        );
         if header.read_ident == self.rid {
             let algorithm = self.a.get_mut(&header.sector_idx).unwrap();
             if algorithm.write_phase {
@@ -367,7 +341,12 @@ impl AtomicRegisterImpl {
         write_rank: u8,
         sector_data: SectorVec,
     ) {
-        log::debug!("RID: {}, WRITEPROC", header.read_ident);
+        log::debug!(
+            "{}, {}: rid {}, WRITEPROC",
+            self.process_identifier,
+            self.name,
+            header.read_ident
+        );
         let sector_idx = header.sector_idx;
         let (ts, ws) = self.get_metadata(sector_idx).await;
 
@@ -390,21 +369,36 @@ impl AtomicRegisterImpl {
     }
 
     async fn handle_ack(&mut self, header: SystemCommandHeader) {
-        log::debug!("RID: {}, ACK", header.read_ident);
+        log::debug!(
+            "{}, {}: rid {}, ACK",
+            self.process_identifier,
+            self.name,
+            header.read_ident,
+        );
         if header.read_ident == self.rid {
             let sector_idx = header.sector_idx;
-
             let algorithm = self.a.get_mut(&sector_idx).unwrap();
             if !algorithm.write_phase {
                 return ();
             }
 
             algorithm.acklist.insert(header.process_identifier);
-            log::debug!("ACK: {}", algorithm.acklist.len());
+            log::debug!(
+                "{}, {}: rid {}, number of acks: {}",
+                self.process_identifier,
+                self.name,
+                self.rid,
+                algorithm.acklist.len()
+            );
             if algorithm.acklist.len() as u8 > self.processes_count / 2
                 && (algorithm.reading || algorithm.writing)
             {
-                log::debug!("Operation will finish");
+                log::debug!(
+                    "{}, {}: rid {}, Operation will finish",
+                    self.process_identifier,
+                    self.name,
+                    self.rid,
+                );
                 let mut algorithm_removed = self.a.remove(&sector_idx).unwrap();
 
                 let op_return = if algorithm_removed.reading {
@@ -442,12 +436,6 @@ impl AtomicRegister for AtomicRegisterImpl {
         // sending the response to client
         success_callback: Box<SuccessCallback>,
     ) {
-        log::debug!(
-            "I am process {} and I just received client command {} for sector {}",
-            self.process_identifier,
-            cmd.header.request_identifier,
-            cmd.header.sector_idx,
-        );
         self.rid = self.rid + 1;
         self.store_rid().await;
         match cmd.content {
@@ -467,13 +455,6 @@ impl AtomicRegister for AtomicRegisterImpl {
     /// This function corresponds to the handlers of READ_PROC, VALUE, WRITE_PROC
     /// and ACK messages in the (N,N)-AtomicRegister algorithm.
     async fn system_command(&mut self, cmd: SystemRegisterCommand) {
-        log::debug!(
-            "I am register {} and I just received System command from {} with rid {}",
-            self.process_identifier,
-            cmd.header.process_identifier,
-            cmd.header.read_ident
-        );
-
         match cmd.content {
             SystemRegisterCommandContent::ReadProc => self.handle_readproc(cmd.header).await,
             SystemRegisterCommandContent::Value {
@@ -497,13 +478,6 @@ impl AtomicRegister for AtomicRegisterImpl {
     }
 }
 
-/// Idents are numbered starting at 1 (up to the number of processes in the system).
-/// Storage for atomic register algorithm data is separated into StableStorage.
-/// Communication with other processes of the system is to be done by register_client.
-/// And sectors must be stored in the sectors_manager instance.
-///
-/// This function corresponds to the handlers of Init and Recovery events in the
-/// (N,N)-AtomicRegister algorithm.
 pub async fn build_atomic_register(
     self_ident: u8,
     metadata: Box<dyn StableStorage>,
@@ -511,7 +485,34 @@ pub async fn build_atomic_register(
     sectors_manager: Arc<dyn SectorsManager>,
     processes_count: u8,
 ) -> Box<dyn AtomicRegister> {
+    my_build_atomic_register(
+        "".to_string(),
+        self_ident,
+        metadata,
+        register_client,
+        sectors_manager,
+        processes_count,
+    )
+    .await
+}
+
+/// Idents are numbered starting at 1 (up to the number of processes in the system).
+/// Storage for atomic register algorithm data is separated into StableStorage.
+/// Communication with other processes of the system is to be done by register_client.
+/// And sectors must be stored in the sectors_manager instance.
+///
+/// This function corresponds to the handlers of Init and Recovery events in the
+/// (N,N)-AtomicRegister algorithm.
+pub async fn my_build_atomic_register(
+    name: String,
+    self_ident: u8,
+    metadata: Box<dyn StableStorage>,
+    register_client: Arc<dyn RegisterClient>,
+    sectors_manager: Arc<dyn SectorsManager>,
+    processes_count: u8,
+) -> Box<dyn AtomicRegister> {
     let mut atomic_register = AtomicRegisterImpl {
+        name: name,
         rid: 0,
         a: HashMap::new(),
         metadata,

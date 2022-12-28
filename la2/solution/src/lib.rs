@@ -259,7 +259,6 @@ pub async fn run_register_process(config: Configuration) {
         config.hmac_client_key,
     )
     .await;
-    log::debug!("TCP bound");
 
     let processes_count = config.public.tcp_locations.len();
 
@@ -270,7 +269,6 @@ pub async fn run_register_process(config: Configuration) {
 
     let atomic_handler = AtomicHandler::create_atomic_handler(config.public.n_sectors);
 
-    log::debug!("atomic handler created");
 
     let command_disposer = atomic_handler.disposer.clone();
     let register_client = Arc::new(
@@ -367,7 +365,8 @@ impl AtomicHandler {
         let path = get_atomic_register_metadata_pathbuf(original_pathbuf, register_index);
         fs::create_dir_all(&path).await.unwrap();
         let metadata = build_stable_storage(path).await;
-        let mut a = build_atomic_register(
+        let mut a = my_build_atomic_register(
+            format!("{}", register_index),
             self_rank,
             metadata,
             register_client.clone(),
@@ -376,7 +375,6 @@ impl AtomicHandler {
         )
         .await;
 
-        log::debug!("spawning register {} task", register_index);
         tokio::spawn(async move {
             let (s, mut r_finished) = channel::<ClientCommandResponseTransfer>(1);
             let s_arc = Arc::new(s);
@@ -385,11 +383,12 @@ impl AtomicHandler {
             let mut messages_during_current_request: HashSet<Uuid> = HashSet::new();
             loop {
                 if let Some((current_sector, success_sender)) = &current_operation_data {
-                    log::debug!(
-                        "Register object {} is processing sector {}",
-                        register_index,
-                        current_sector
-                    );
+                    // log::debug!(
+                    //     "{} Register object {} is processing sector {}",
+                    //     self_rank,
+                    //     register_index,
+                    //     current_sector
+                    // );
                     select! {
                         Some(cmd) = r_s.recv() => {
                             if !messages_during_current_request.contains(&cmd.header.msg_ident) {
@@ -404,7 +403,7 @@ impl AtomicHandler {
                         }
                     }
                 } else {
-                    log::debug!("Register object {} waiting for task", register_index);
+                    // log::debug!("{} register object {} waiting for task", register_index);
                     select! {
                         Some(cmd) = r_s.recv() => {
                             a.system_command(cmd).await;
@@ -440,7 +439,6 @@ impl AtomicHandler {
         home_dir: PathBuf,
         processes_count: u8,
     ) {
-        log::debug!("Spawning tasks");
         for (register_index, (r_c, r_s)) in atomic_handler
             .client_receivers
             .into_iter()

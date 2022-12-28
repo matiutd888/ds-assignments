@@ -54,14 +54,11 @@ impl RegisterClientImpl {
         hmac_key: [u8; 64],
         self_sender: Arc<dyn MySender<SystemRegisterCommand>>,
     ) -> RegisterClientImpl {
-        log::debug!("creating register client");
         let (s, r) = channel(Self::CHANNEL_SIZE);
         let mut tcp_sender = TcpSender::new(tcp_locations, r, hmac_key);
-        log::debug!("tcp sender created");
         tokio::spawn(async move {
             tcp_sender.send_in_loop().await;
         });
-        log::debug!("tcp sender task created!");
         let register_client = RegisterClientImpl {
             to_rebroadcast: Arc::new(RwLock::new(HashMap::new())),
             self_sender: self_sender,
@@ -70,7 +67,7 @@ impl RegisterClientImpl {
             processes_count: processes_count,
         };
         register_client
-            .spawn_timer(Duration::from_millis(3000))
+            .spawn_timer(Duration::from_millis(4000))
             .await;
         register_client
     }
@@ -167,7 +164,7 @@ impl TcpSender {
     async fn send_in_loop(&mut self) {
         loop {
             let new_command = self.receiver.recv().await.unwrap();
-            let index = new_command.target as usize;
+            let index = new_command.target as usize - 1;
             if self.streams.get(index).unwrap().is_none() {
                 self.connect(index).await;
             }
@@ -197,15 +194,12 @@ impl TcpSender {
 #[async_trait::async_trait]
 impl RegisterClient for RegisterClientImpl {
     async fn send(&self, msg: Send) {
-        log::debug!(
-            "registerclient received send message for process {}",
-            msg.target
-        );
+        // log::debug!(
+        //     "{} received send message for process {}",
+        //     self.self_rank,
+        //     msg.target
+        // );
         if self.self_rank == msg.target {
-            log::debug!(
-                "registerclient received send message for self (process {}) ",
-                self.self_rank
-            );
             self.self_sender.send(msg.cmd.as_ref().clone()).await;
         } else {
             self.tcp_sender
@@ -219,10 +213,9 @@ impl RegisterClient for RegisterClientImpl {
     }
 
     async fn broadcast(&self, msg: Broadcast) {
-        log::debug!(
-            "registerclient received broadcast command, i am for process {}",
-            self.self_rank
-        );
+        // log::debug!(
+        //     "{} received broadcast command", self.self_rank,
+        // );
 
         Self::handle_broadcast(
             &msg,
