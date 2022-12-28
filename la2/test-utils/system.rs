@@ -97,10 +97,18 @@ impl TestProcessesConfig {
         serialize_register_command(register_cmd, &mut data, &self.hmac_client_key)
             .await
             .unwrap();
-
+        log::debug!("Sending client message");
         stream.write_all(&data).await.unwrap();
     }
 
+    pub async fn send_cmd_my(&self, register_cmd: &RegisterCommand, stream: &mut Vec<u8>) {
+        let mut data = Vec::new();
+        serialize_register_command(register_cmd, &mut data, &self.hmac_client_key)
+            .await
+            .unwrap();
+        log::debug!("Sending client message");
+        stream.extend(&data);
+    }
     pub async fn connect(&self, proc_idx: usize) -> TcpStream {
         let location = self.tcp_locations.get(proc_idx).unwrap();
         TcpStream::connect((location.0.as_str(), location.1))

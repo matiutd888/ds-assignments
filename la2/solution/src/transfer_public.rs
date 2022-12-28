@@ -20,19 +20,18 @@ pub async fn deserialize_register_command(
     hmac_client_key: &[u8; 32],
 ) -> Result<(RegisterCommand, bool), Error> {
     async fn read_hmac_tag(
-        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
+        async_read: &mut (dyn AsyncRead + Send + Unpin),
     ) -> Result<[u8; 32], Error> {
         let mut hmac_buffer: [u8; 32] = [0; 32];
         async_read.read_exact(&mut hmac_buffer).await?;
         Ok(hmac_buffer)
     }
 
-    let mut buff_reader = BufReader::new(data);
     loop {
-        read_magic_number(&mut buff_reader).await?;
+        read_magic_number(data).await?;
         let mut pre_type_bytes: [u8; 3] = [0; 3];
-        buff_reader.read_exact(&mut pre_type_bytes).await?;
-        let msg_type = buff_reader.read_u8().await?;
+        data.read_exact(&mut pre_type_bytes).await?;
+        let msg_type = data.read_u8().await?;
 
         let mut initial_content = Vec::new();
         initial_content.extend(&MAGIC_NUMBER);
@@ -46,8 +45,8 @@ pub async fn deserialize_register_command(
                     content: initial_content,
                 };
                 let command =
-                    RegisterCommand::Client(c.read_client_command(&mut buff_reader).await?);
-                let tag = read_hmac_tag(&mut buff_reader).await?;
+                    RegisterCommand::Client(c.read_client_command(data).await?);
+                let tag = read_hmac_tag(data).await?;
                 return Ok((command, verify_hmac_tag(&tag, &c.content, hmac_client_key)));
             }
             0x3..=0x6 => {
@@ -57,12 +56,12 @@ pub async fn deserialize_register_command(
                     content: initial_content,
                 };
                 let command =
-                    RegisterCommand::System(s.read_system_command(&mut buff_reader).await?);
-                let tag = read_hmac_tag(&mut buff_reader).await?;
+                    RegisterCommand::System(s.read_system_command(data).await?);
+                let tag = read_hmac_tag(data).await?;
                 return Ok((command, verify_hmac_tag(&tag, &s.content, hmac_system_key)));
             }
             _ => {
-                log::warn!("Unexpected message type! {}", msg_type);
+                log::debug!("Unexpected message type! {}", msg_type);
             }
         };
     }
@@ -76,7 +75,7 @@ struct ClientCommandReader {
 impl ClientCommandReader {
     pub async fn read_client_command(
         &mut self,
-        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
+        async_read: &mut (dyn AsyncRead + Send + Unpin),
     ) -> Result<ClientRegisterCommand, Error> {
         let header: ClientCommandHeader = self.read_header(async_read).await?;
         let content: ClientRegisterCommandContent = self.read_content(async_read).await?;
@@ -85,7 +84,7 @@ impl ClientCommandReader {
 
     async fn read_header(
         &mut self,
-        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
+        async_read: &mut (dyn AsyncRead + Send + Unpin),
     ) -> Result<ClientCommandHeader, Error> {
         let mut header_buf: [u8; 16] = [0; 16];
         async_read.read_exact(&mut header_buf).await?;
@@ -101,13 +100,14 @@ impl ClientCommandReader {
 
     async fn read_nonempty_content(
         &mut self,
-        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
+        async_read: &mut (dyn AsyncRead + Send + Unpin),
     ) -> Result<SectorVec, Error> {
         let mut content_buf: [u8; constants::SECTOR_SIZE_BYTES] = [0; constants::SECTOR_SIZE_BYTES];
 
         async_read.read_exact(&mut content_buf).await?;
 
         let sector_vec: SectorVec = SectorVec(Vec::from(content_buf.clone()));
+        assert!(sector_vec.0.len() == constants::SECTOR_SIZE_BYTES);
 
         self.content.extend(content_buf);
         Ok(sector_vec)
@@ -115,7 +115,7 @@ impl ClientCommandReader {
 
     async fn read_content(
         &mut self,
-        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
+        async_read: &mut (dyn AsyncRead + Send + Unpin),
     ) -> Result<ClientRegisterCommandContent, Error> {
         match self.msg_type {
             0x1 => Ok(ClientRegisterCommandContent::Read),
@@ -142,7 +142,7 @@ fn verify_hmac_tag(tag: &[u8], content: &Vec<u8>, secret_key: &[u8]) -> bool {
 impl SystemCommandReader {
     pub async fn read_system_command(
         &mut self,
-        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
+        async_read: &mut (dyn AsyncRead + Send + Unpin),
     ) -> Result<SystemRegisterCommand, Error> {
         let header: SystemCommandHeader = self.read_header(async_read).await?;
         let content: SystemRegisterCommandContent = self.read_content(async_read).await?;
@@ -151,7 +151,7 @@ impl SystemCommandReader {
 
     async fn read_header(
         &mut self,
-        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
+        async_read: &mut (dyn AsyncRead + Send + Unpin),
     ) -> Result<SystemCommandHeader, Error> {
         let mut header_buf: [u8; 32] = [0; 32];
 
@@ -171,7 +171,7 @@ impl SystemCommandReader {
 
     async fn read_nonempty_content(
         &mut self,
-        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
+        async_read: &mut (dyn AsyncRead + Send + Unpin),
     ) -> Result<(Timestamp, WriteRank, SectorVec), Error> {
         const CONTENT_BUF_SIZE: usize = 8 + 7 + 1 + constants::SECTOR_SIZE_BYTES;
         let mut content_buf: [u8; CONTENT_BUF_SIZE] = [0; CONTENT_BUF_SIZE];
@@ -190,7 +190,7 @@ impl SystemCommandReader {
 
     async fn read_content(
         &mut self,
-        async_read: &mut BufReader<&mut (dyn AsyncRead + Send + Unpin)>,
+        async_read: &mut (dyn AsyncRead + Send + Unpin),
     ) -> Result<SystemRegisterCommandContent, Error> {
         match self.msg_type {
             0x3 => Ok(SystemRegisterCommandContent::ReadProc),
@@ -359,14 +359,14 @@ impl CustomSerializable for ClientCommandHeader {
     }
 }
 
-fn get_type_client(c: &ClientRegisterCommand) -> MsgType {
+pub fn get_type_client(c: &ClientRegisterCommand) -> MsgType {
     match c.content {
         ClientRegisterCommandContent::Read => constants::TYPE_READ,
         ClientRegisterCommandContent::Write { .. } => constants::TYPE_WRITE,
     }
 }
 
-fn get_type_system(s: &SystemRegisterCommand) -> MsgType {
+pub fn get_type_system(s: &SystemRegisterCommand) -> MsgType {
     match s.content {
         SystemRegisterCommandContent::ReadProc => constants::TYPE_READ_PROC,
         SystemRegisterCommandContent::Value { .. } => constants::TYPE_VALUE,
@@ -375,7 +375,7 @@ fn get_type_system(s: &SystemRegisterCommand) -> MsgType {
     }
 }
 
-fn get_type(r: &RegisterCommand) -> MsgType {
+pub fn get_type(r: &RegisterCommand) -> MsgType {
     match r {
         RegisterCommand::Client(c) => get_type_client(&c),
         RegisterCommand::System(s) => get_type_system(&s),
@@ -445,8 +445,10 @@ where
     msg = msg_type.custom_serialize(msg);
     msg = header.custom_serialize(msg);
     msg = content.custom_serialize(msg);
+
     let tag = calculate_hmac_tag(&msg, &hmac_key);
     msg.extend(tag);
+
     writer.write_all(&msg).await
 }
 
@@ -530,7 +532,6 @@ pub async fn serialize_client_response(
     buffer = c.request_number.custom_serialize(buffer);
     buffer = c.content.custom_serialize(buffer);
     buffer.extend(calculate_hmac_tag(&buffer, hmac_client_key));
-
     writer.write_all(&buffer).await
 }
 

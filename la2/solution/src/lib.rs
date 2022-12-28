@@ -17,6 +17,7 @@ pub use sectors_manager_public::*;
 pub use stable_storage_public::*;
 use tokio::{
     fs,
+    io::BufReader,
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpListener, TcpStream,
@@ -152,19 +153,19 @@ impl TcpReader {
     }
 
     async fn spawn_reader_task(
-        mut reader: OwnedReadHalf,
+        reader_raw: OwnedReadHalf,
         hmac_client_key: [u8; 32],
         hmac_system_key: [u8; 64],
         command_disposer: Arc<AtomicRegisterCommandsDisposer>,
         sender_op_end: Sender<ClientCommandResponseTransfer>,
         n_sectors: u64,
     ) {
+        let mut reader = BufReader::new(reader_raw);
         tokio::spawn(async move {
             loop {
                 let res =
                     deserialize_register_command(&mut reader, &hmac_system_key, &hmac_client_key)
                         .await;
-
                 match res {
                     Ok((cmd, b)) => {
                         if b {
@@ -177,6 +178,12 @@ impl TcpReader {
                             {
                                 let atomic_object_message = match cmd {
                                     RegisterCommand::Client(c) => {
+                                        // log::debug!(
+                                        //     "DESERIALIZED CLIENT COMMAND {}, {}, {} \n",
+                                        //     c.header.sector_idx,
+                                        //     c.header.request_identifier,
+                                        //     get_type_client(&c),
+                                        // );
                                         AtomicRegisterTaskCommand::ClientCommand((
                                             c,
                                             sender_op_end.clone(),
@@ -203,7 +210,7 @@ impl TcpReader {
                             }
                         }
                     }
-                    Err(err) => log::error!("Error while deserializing {}", err),
+                    Err(err) => log::debug!("Error while deserializing {}", err),
                 }
             }
         });
@@ -269,7 +276,6 @@ pub async fn run_register_process(config: Configuration) {
 
     let atomic_handler = AtomicHandler::create_atomic_handler(config.public.n_sectors);
 
-
     let command_disposer = atomic_handler.disposer.clone();
     let register_client = Arc::new(
         RegisterClientImpl::new(
@@ -313,7 +319,7 @@ impl AtomicHandler {
     // TODO think about making it 1.
     // Since one atomic register can execute only one operation at a time (for a given sector),
     // the operations shall be queued. We suggest using a TCP buffer itself as the queue
-    const CLIENT_CHANNEL_SIZE: usize = 4;
+    const CLIENT_CHANNEL_SIZE: usize = 5;
 
     fn create_atomic_handler(n_sectors: u64) -> AtomicHandler {
         let n_atomic_registers = constants::N_ATOMIC_REGISTERS as usize;
@@ -383,12 +389,12 @@ impl AtomicHandler {
             let mut messages_during_current_request: HashSet<Uuid> = HashSet::new();
             loop {
                 if let Some((current_sector, success_sender)) = &current_operation_data {
-                    // log::debug!(
-                    //     "{} Register object {} is processing sector {}",
-                    //     self_rank,
-                    //     register_index,
-                    //     current_sector
-                    // );
+                    log::debug!(
+                        "{}, {}: processing sector {}",
+                        self_rank,
+                        register_index,
+                        current_sector
+                    );
                     select! {
                         Some(cmd) = r_s.recv() => {
                             if !messages_during_current_request.contains(&cmd.header.msg_ident) {
@@ -397,13 +403,14 @@ impl AtomicHandler {
                             }
                         },
                         Some(op) = r_finished.recv() => {
+                            log::debug!("{}, {}: Received info about operation finished!", self_rank, register_index);
                             register_client.cancel_broadcast(current_sector.clone()).await;
                             success_sender.send(op).await.unwrap();
                             current_operation_data = None;
                         }
                     }
                 } else {
-                    // log::debug!("{} register object {} waiting for task", register_index);
+                    log::debug!("{}, {} waiting for task", self_rank, register_index);
                     select! {
                         Some(cmd) = r_s.recv() => {
                             a.system_command(cmd).await;
@@ -417,6 +424,7 @@ impl AtomicHandler {
                                 cmd,
                                 Box::new(|op: OperationSuccess| {
                                     Box::pin(async move {
+                                        log::debug!("OPERATION FINISHED, sending operation success");
                                         s_cloned
                                             .send(ClientCommandResponseTransfer::from_success(op))
                                             .await.unwrap();
@@ -479,6 +487,7 @@ impl AtomicRegisterCommandsDisposer {
         match command {
             AtomicRegisterTaskCommand::ClientCommand(c) => {
                 let sender_index = self.get_index_from_sector(c.0.header.sector_idx);
+                log::debug!("Command disposer - received new command for sector {} that will be distributed to {}", c.0.header.sector_idx, sender_index);
                 let q = self.client_senders.get(sender_index).unwrap();
                 q.send(c).await.unwrap();
             }

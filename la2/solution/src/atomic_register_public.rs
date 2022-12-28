@@ -138,6 +138,16 @@ impl AtomicRegisterImpl {
         }
     }
 
+    fn warn_if_algorithm_not_none(&mut self, sector_idx: SectorIdx) {
+        if let Some(_) = self.a {
+            log::warn!(
+                "{}, {} overriding algorithm value!",
+                self.process_identifier,
+                self.name,
+            );
+        }
+    }
+
     fn get_default_ret_header(&self, sector_idx: SectorIdx, rid: u64) -> SystemCommandHeader {
         SystemCommandHeader {
             process_identifier: self.process_identifier,
@@ -197,7 +207,7 @@ impl AtomicRegisterImpl {
             self.rid,
             header.sector_idx
         );
-        self.remove_algorithm(header.sector_idx).await;
+        self.warn_if_algorithm_not_none(header.sector_idx);
         let mut new_entry = Algorithm::new(header.request_identifier, success_callback).await;
         new_entry.reading = true;
 
@@ -220,13 +230,13 @@ impl AtomicRegisterImpl {
             self.rid,
             header.sector_idx
         );
-        self.remove_algorithm(header.sector_idx).await;
+        self.warn_if_algorithm_not_none(header.sector_idx);
         let mut new_entry = Algorithm::new(header.request_identifier, success_callback).await;
         new_entry.writing = true;
 
         new_entry.algorithm_val = Some(data);
 
-        self.a.insert(header.sector_idx, new_entry);
+        self.a = Some(new_entry);
 
         // Create system message and send to other processes
         self.broadcast_readproc(header.sector_idx).await;
@@ -240,7 +250,7 @@ impl AtomicRegisterImpl {
             header.read_ident
         );
 
-        let metadata = self.get_metadata(header.sector_idx).await;
+        let metadata = self.sectors_manager.read_metadata(header.sector_idx).await;
 
         let new_system_header = SystemCommandHeader {
             process_identifier: self.process_identifier,
@@ -280,56 +290,56 @@ impl AtomicRegisterImpl {
             header.read_ident
         );
         if header.read_ident == self.rid {
-            let algorithm = self.a.get_mut(&header.sector_idx).unwrap();
-            if algorithm.write_phase {
-                return ();
-            }
+            if let Some(algorithm) = &mut self.a {
+                if algorithm.write_phase {
+                    return ();
+                }
 
-            algorithm.readlist.insert(header.process_identifier);
-            algorithm.update_highest(timestamp, write_rank, sector_data);
+                algorithm.readlist.insert(header.process_identifier);
+                algorithm.update_highest(timestamp, write_rank, sector_data);
 
-            if algorithm.readlist.len() as u8 > (self.processes_count / 2)
-                && (algorithm.reading || algorithm.writing)
-            {
-                let (m_timestamp, m_wr) = self.get_metadata(header.sector_idx).await;
-                let m_val = self.get_val(header.sector_idx).await;
+                if algorithm.readlist.len() as u8 > (self.processes_count / 2)
+                    && (algorithm.reading || algorithm.writing)
+                {
+                    let (m_timestamp, m_wr) =
+                        self.sectors_manager.read_metadata(header.sector_idx).await;
+                    let m_val = self.sectors_manager.read_data(header.sector_idx).await;
 
-                let mut algorithm_val = self.a.get_mut(&header.sector_idx).unwrap();
+                    algorithm.update_highest(m_timestamp, m_wr, m_val);
 
-                algorithm_val.update_highest(m_timestamp, m_wr, m_val);
+                    let mut highest: Option<(Timestamp, WriteRank, SectorVec)> = None;
+                    mem::swap(&mut highest, &mut algorithm.highest);
 
-                let mut highest: Option<(Timestamp, WriteRank, SectorVec)> = None;
-                mem::swap(&mut highest, &mut algorithm_val.highest);
+                    algorithm.clear_lists();
+                    algorithm.write_phase = true;
 
-                algorithm_val.clear_lists();
-                algorithm_val.write_phase = true;
+                    let highest_val = highest.unwrap();
 
-                let highest_val = highest.unwrap();
+                    let (send_ts, send_wr, send_val) = if algorithm.writing {
+                        let writeval = algorithm.algorithm_val.clone().unwrap();
+                        let self_rank = self.process_identifier;
+                        let new_timestamp = highest_val.0 + 1;
 
-                let (send_ts, send_wr, send_val) = if algorithm_val.writing {
-                    let writeval = algorithm_val.algorithm_val.clone().unwrap();
-                    let self_rank = self.process_identifier;
-                    let new_timestamp = highest_val.0 + 1;
+                        self.store_val_and_metadata(
+                            header.sector_idx,
+                            new_timestamp,
+                            self_rank,
+                            writeval.clone(),
+                        )
+                        .await;
 
-                    self.store_val_and_metadata(
-                        header.sector_idx,
-                        new_timestamp,
-                        self_rank,
-                        writeval.clone(),
-                    )
-                    .await;
-
-                    (new_timestamp, self_rank, writeval)
-                } else {
-                    algorithm_val.algorithm_val = Some(highest_val.2);
-                    (
-                        highest_val.0,
-                        highest_val.1,
-                        algorithm_val.algorithm_val.clone().unwrap(),
-                    )
-                };
-                self.broadcast_writeproc(header.sector_idx, send_ts, send_wr, send_val)
-                    .await;
+                        (new_timestamp, self_rank, writeval)
+                    } else {
+                        algorithm.algorithm_val = Some(highest_val.2);
+                        (
+                            highest_val.0,
+                            highest_val.1,
+                            algorithm.algorithm_val.clone().unwrap(),
+                        )
+                    };
+                    self.broadcast_writeproc(header.sector_idx, send_ts, send_wr, send_val)
+                        .await;
+                }
             }
         }
     }
@@ -376,51 +386,51 @@ impl AtomicRegisterImpl {
             header.read_ident,
         );
         if header.read_ident == self.rid {
-            let sector_idx = header.sector_idx;
-            let algorithm = self.a.get_mut(&sector_idx).unwrap();
-            if !algorithm.write_phase {
-                return ();
-            }
+            if let Some(algorithm) = &mut self.a {
+                if !algorithm.write_phase {
+                    return ();
+                }
 
-            algorithm.acklist.insert(header.process_identifier);
-            log::debug!(
-                "{}, {}: rid {}, number of acks: {}",
-                self.process_identifier,
-                self.name,
-                self.rid,
-                algorithm.acklist.len()
-            );
-            if algorithm.acklist.len() as u8 > self.processes_count / 2
-                && (algorithm.reading || algorithm.writing)
-            {
+                algorithm.acklist.insert(header.process_identifier);
                 log::debug!(
-                    "{}, {}: rid {}, Operation will finish",
+                    "{}, {}: rid {}, number of acks: {}",
                     self.process_identifier,
                     self.name,
                     self.rid,
+                    algorithm.acklist.len()
                 );
-                let mut algorithm_removed = self.a.remove(&sector_idx).unwrap();
+                if algorithm.acklist.len() as u8 > self.processes_count / 2
+                    && (algorithm.reading || algorithm.writing)
+                {
+                    log::debug!(
+                        "{}, {}: rid {}, Operation will finish",
+                        self.process_identifier,
+                        self.name,
+                        self.rid,
+                    );
 
-                let op_return = if algorithm_removed.reading {
-                    let mut readval: Option<SectorVec> = None;
-                    std::mem::swap(&mut readval, &mut algorithm_removed.algorithm_val);
+                    let mut algorithm_removed_opt: Option<Algorithm> = None;
+                    mem::swap(&mut algorithm_removed_opt, &mut self.a);
+                    let mut algorithm_removed = algorithm_removed_opt.unwrap();
 
-                    crate::OperationReturn::Read(crate::ReadReturn {
-                        read_data: readval.unwrap(),
-                    })
-                } else {
-                    crate::OperationReturn::Write
-                };
+                    let op_return = if algorithm_removed.reading {
+                        let mut readval: Option<SectorVec> = None;
+                        std::mem::swap(&mut readval, &mut algorithm_removed.algorithm_val);
 
-                self.remove_algorithm(sector_idx).await;
+                        crate::OperationReturn::Read(crate::ReadReturn {
+                            read_data: readval.unwrap(),
+                        })
+                    } else {
+                        crate::OperationReturn::Write
+                    };
 
-                let op_succ = OperationSuccess {
-                    request_identifier: algorithm_removed.request_identifier,
-                    op_return: op_return,
-                };
-
-                (algorithm_removed.success_callback)(op_succ).await;
-                log::debug!("success callback!");
+                    let op_succ = OperationSuccess {
+                        request_identifier: algorithm_removed.request_identifier,
+                        op_return: op_return,
+                    };
+                    (algorithm_removed.success_callback)(op_succ).await;
+                    self.a = None;
+                }
             }
         }
     }
@@ -514,7 +524,7 @@ pub async fn my_build_atomic_register(
     let mut atomic_register = AtomicRegisterImpl {
         name: name,
         rid: 0,
-        a: HashMap::new(),
+        a: None,
         metadata,
         register_client,
         sectors_manager,
