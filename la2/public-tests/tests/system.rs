@@ -4,11 +4,9 @@ use assignment_2_solution::{
     MAGIC_NUMBER,
 };
 use assignment_2_test_utils::system::*;
-use futures::stream;
 use hmac::Mac;
 use ntest::timeout;
 use std::convert::TryInto;
-use std::process::exit;
 use std::time::Duration;
 use tempfile::tempdir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -140,8 +138,6 @@ async fn large_number_of_operations_execute_successfully() {
     let mut stream = config.connect(2).await;
 
     for cmd_idx in 0..commands_total {
-
-        log::debug!("Sending client message {}", cmd_idx);
         config
             .send_cmd(
                 &RegisterCommand::Client(ClientRegisterCommand {
@@ -157,10 +153,11 @@ async fn large_number_of_operations_execute_successfully() {
             )
             .await;
     }
-    
+
     for _ in 0..commands_total {
         config.read_response(&mut stream).await.unwrap();
     }
+
     // when
     for cmd_idx in 0..commands_total {
         config
