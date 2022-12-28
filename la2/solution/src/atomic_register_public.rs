@@ -443,9 +443,10 @@ impl AtomicRegister for AtomicRegisterImpl {
         success_callback: Box<SuccessCallback>,
     ) {
         log::debug!(
-            "I am register {} and I just received command {}",
+            "I am process {} and I just received client command {} for sector {}",
             self.process_identifier,
-            cmd.header.request_identifier
+            cmd.header.request_identifier,
+            cmd.header.sector_idx,
         );
         self.rid = self.rid + 1;
         self.store_rid().await;

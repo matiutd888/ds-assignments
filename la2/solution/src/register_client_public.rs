@@ -28,6 +28,7 @@ pub struct Broadcast {
     pub cmd: Arc<SystemRegisterCommand>,
 }
 
+#[derive(Debug)]
 pub struct Send {
     pub cmd: Arc<SystemRegisterCommand>,
     /// Identifier of the target process. Those start at 1.
@@ -53,12 +54,14 @@ impl RegisterClientImpl {
         hmac_key: [u8; 64],
         self_sender: Arc<dyn MySender<SystemRegisterCommand>>,
     ) -> RegisterClientImpl {
+        log::debug!("creating register client");
         let (s, r) = channel(Self::CHANNEL_SIZE);
         let mut tcp_sender = TcpSender::new(tcp_locations, r, hmac_key);
-        let _ = tokio::spawn(async move {
+        log::debug!("tcp sender created");
+        tokio::spawn(async move {
             tcp_sender.send_in_loop().await;
-        })
-        .await;
+        });
+        log::debug!("tcp sender task created!");
         let register_client = RegisterClientImpl {
             to_rebroadcast: Arc::new(RwLock::new(HashMap::new())),
             self_sender: self_sender,
@@ -82,7 +85,7 @@ impl RegisterClientImpl {
         let processes_count = self.processes_count;
         let self_rank = self.self_rank;
 
-        _ = tokio::spawn(async move {
+        tokio::spawn(async move {
             loop {
                 interval.tick().await;
                 let guard = to_rebroadcast.read().await;
@@ -97,8 +100,7 @@ impl RegisterClientImpl {
                     .await;
                 }
             }
-        })
-        .await;
+        });
     }
 
     async fn handle_broadcast(
@@ -111,12 +113,15 @@ impl RegisterClientImpl {
         for target in 1..=processes_count {
             let target_u8 = target as u8;
             if target_u8 == self_rank {
-                _ = self_sender.send(b.cmd.as_ref().clone());
+                self_sender.send(b.cmd.as_ref().clone()).await;
             } else {
-                _ = tcp_sender.send(Send {
-                    cmd: b.cmd.clone(),
-                    target: target_u8,
-                });
+                tcp_sender
+                    .send(Send {
+                        cmd: b.cmd.clone(),
+                        target: target_u8,
+                    })
+                    .await
+                    .unwrap();
             }
         }
     }
@@ -192,17 +197,33 @@ impl TcpSender {
 #[async_trait::async_trait]
 impl RegisterClient for RegisterClientImpl {
     async fn send(&self, msg: Send) {
+        log::debug!(
+            "registerclient received send message for process {}",
+            msg.target
+        );
         if self.self_rank == msg.target {
-            _ = self.self_sender.send(msg.cmd.as_ref().clone());
+            log::debug!(
+                "registerclient received send message for self (process {}) ",
+                self.self_rank
+            );
+            self.self_sender.send(msg.cmd.as_ref().clone()).await;
         } else {
-            _ = self.tcp_sender.send(Send {
-                cmd: msg.cmd.clone(),
-                target: msg.target,
-            });
+            self.tcp_sender
+                .send(Send {
+                    cmd: msg.cmd.clone(),
+                    target: msg.target,
+                })
+                .await
+                .unwrap();
         }
     }
 
     async fn broadcast(&self, msg: Broadcast) {
+        log::debug!(
+            "registerclient received broadcast command, i am for process {}",
+            self.self_rank
+        );
+
         Self::handle_broadcast(
             &msg,
             &self.self_sender,

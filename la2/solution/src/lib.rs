@@ -11,10 +11,12 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 pub use crate::domain::*;
 pub use atomic_register_public::*;
+use env_logger;
 pub use register_client_public::*;
 pub use sectors_manager_public::*;
 pub use stable_storage_public::*;
 use tokio::{
+    fs,
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpListener, TcpStream,
@@ -70,7 +72,7 @@ impl TcpReader {
         let hmac_client_key_arc = Arc::new(reader.hmac_client_key);
         let hmac_system_key_arc = Arc::new(reader.hmac_system_key);
 
-        _ = tokio::spawn(async move {
+        tokio::spawn(async move {
             loop {
                 let accept_res = reader.socket.accept().await;
                 match accept_res {
@@ -87,8 +89,7 @@ impl TcpReader {
                     Err(err) => log::info!("{:?}", err),
                 }
             }
-        })
-        .await;
+        });
     }
 
     async fn send_client_response(
@@ -113,9 +114,7 @@ impl TcpReader {
                     }
                 }
             }
-        })
-        .await
-        .unwrap();
+        });
     }
 
     async fn handle_incorrect_sector_id(
@@ -207,9 +206,7 @@ impl TcpReader {
                     Err(err) => log::error!("Error while deserializing {}", err),
                 }
             }
-        })
-        .await
-        .unwrap();
+        });
     }
 
     async fn spawn_connection_task(
@@ -252,6 +249,8 @@ fn get_atomic_register_metadata_pathbuf(
 // Task dla każdego atomic register czytający z kolejek
 // Task czytający z tcp clienta i wysyłający odpowiednie rzeczy
 pub async fn run_register_process(config: Configuration) {
+    env_logger::init();
+
     let self_rank = config.public.self_rank;
     let self_rank_index = (self_rank - 1) as usize;
     let reader: TcpReader = TcpReader::new(
@@ -260,14 +259,18 @@ pub async fn run_register_process(config: Configuration) {
         config.hmac_client_key,
     )
     .await;
+    log::debug!("TCP bound");
 
     let processes_count = config.public.tcp_locations.len();
 
-    let sectors_manager = build_sectors_manager(get_sectors_manager_pathbuf(
-        config.public.storage_dir.clone(),
-    ));
+    let sectors_manager_path = get_sectors_manager_pathbuf(config.public.storage_dir.clone());
+    fs::create_dir_all(&sectors_manager_path).await.unwrap();
+
+    let sectors_manager = build_sectors_manager(sectors_manager_path);
 
     let atomic_handler = AtomicHandler::create_atomic_handler(config.public.n_sectors);
+
+    log::debug!("atomic handler created");
 
     let command_disposer = atomic_handler.disposer.clone();
     let register_client = Arc::new(
@@ -361,11 +364,9 @@ impl AtomicHandler {
         sectors_manager: Arc<dyn SectorsManager>,
         self_rank: u8,
     ) {
-        let metadata = build_stable_storage(get_atomic_register_metadata_pathbuf(
-            original_pathbuf,
-            register_index,
-        ))
-        .await;
+        let path = get_atomic_register_metadata_pathbuf(original_pathbuf, register_index);
+        fs::create_dir_all(&path).await.unwrap();
+        let metadata = build_stable_storage(path).await;
         let mut a = build_atomic_register(
             self_rank,
             metadata,
@@ -375,13 +376,20 @@ impl AtomicHandler {
         )
         .await;
 
+        log::debug!("spawning register {} task", register_index);
         tokio::spawn(async move {
             let (s, mut r_finished) = channel::<ClientCommandResponseTransfer>(1);
             let s_arc = Arc::new(s);
-            let mut current_operation_data: Option<(u64, Sender<ClientCommandResponseTransfer>)> = None;
+            let mut current_operation_data: Option<(u64, Sender<ClientCommandResponseTransfer>)> =
+                None;
             let mut messages_during_current_request: HashSet<Uuid> = HashSet::new();
             loop {
                 if let Some((current_sector, success_sender)) = &current_operation_data {
+                    log::debug!(
+                        "Register object {} is processing sector {}",
+                        register_index,
+                        current_sector
+                    );
                     select! {
                         Some(cmd) = r_s.recv() => {
                             if !messages_during_current_request.contains(&cmd.header.msg_ident) {
@@ -391,29 +399,37 @@ impl AtomicHandler {
                         },
                         Some(op) = r_finished.recv() => {
                             register_client.cancel_broadcast(current_sector.clone()).await;
-                            let _ = success_sender.send(op).await;
+                            success_sender.send(op).await.unwrap();
                             current_operation_data = None;
                         }
                     }
                 } else {
-                    if let Some((cmd, sender)) = r_c.recv().await {
-                        current_operation_data = Some((cmd.header.sector_idx, sender));
-                        messages_during_current_request.clear();
-                        let s_cloned = s_arc.clone();
-                        a.client_command(
-                            cmd,
-                            Box::new(|op: OperationSuccess| {
-                                Box::pin(async move {
-                                    _ = s_cloned.send(ClientCommandResponseTransfer::from_success(op)).await;
-                                })
-                            }),
-                        )
-                        .await
+                    log::debug!("Register object {} waiting for task", register_index);
+                    select! {
+                        Some(cmd) = r_s.recv() => {
+                            a.system_command(cmd).await;
+                        },
+
+                        Some((cmd, sender)) = r_c.recv() => {
+                            current_operation_data = Some((cmd.header.sector_idx, sender));
+                            messages_during_current_request.clear();
+                            let s_cloned = s_arc.clone();
+                            a.client_command(
+                                cmd,
+                                Box::new(|op: OperationSuccess| {
+                                    Box::pin(async move {
+                                        s_cloned
+                                            .send(ClientCommandResponseTransfer::from_success(op))
+                                            .await.unwrap();
+                                    })
+                                }),
+                            )
+                            .await
+                        }
                     }
                 }
             }
-        })
-        .await.unwrap();
+        });
     }
 
     pub async fn spawn_tasks(
@@ -424,6 +440,7 @@ impl AtomicHandler {
         home_dir: PathBuf,
         processes_count: u8,
     ) {
+        log::debug!("Spawning tasks");
         for (register_index, (r_c, r_s)) in atomic_handler
             .client_receivers
             .into_iter()
@@ -465,12 +482,12 @@ impl AtomicRegisterCommandsDisposer {
             AtomicRegisterTaskCommand::ClientCommand(c) => {
                 let sender_index = self.get_index_from_sector(c.0.header.sector_idx);
                 let q = self.client_senders.get(sender_index).unwrap();
-                _ = q.send(c).await;
+                q.send(c).await.unwrap();
             }
             AtomicRegisterTaskCommand::SystemCommand(s) => {
                 let sender_index = self.get_index_from_sector(s.header.sector_idx);
                 let q = self.system_senders.get(sender_index).unwrap();
-                _ = q.send(s).await;
+                q.send(s).await.unwrap();
             }
         };
     }
@@ -494,5 +511,5 @@ pub mod constants {
     pub const TYPE_WRITE_PROC: u8 = 0x05;
     pub const TYPE_ACK: u8 = 0x06;
 
-    pub const N_ATOMIC_REGISTERS: u8 = 108;
+    pub const N_ATOMIC_REGISTERS: u8 = 3;
 }
