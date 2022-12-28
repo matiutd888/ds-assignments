@@ -7,7 +7,7 @@ use crate::{
     SystemRegisterCommandContent, Timestamp, WriteRank,
 };
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use std::future::Future;
 use std::mem;
@@ -138,7 +138,7 @@ impl AtomicRegisterImpl {
         }
     }
 
-    fn warn_if_algorithm_not_none(&mut self, sector_idx: SectorIdx) {
+    fn warn_if_algorithm_not_none(&mut self, _sector_idx: SectorIdx) {
         if let Some(_) = self.a {
             log::warn!(
                 "{}, {} overriding algorithm value!",

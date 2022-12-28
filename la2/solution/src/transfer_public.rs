@@ -11,7 +11,7 @@ use std::{
     io::{Error, ErrorKind},
     vec,
 };
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use uuid::Uuid;
 
 pub async fn deserialize_register_command(
