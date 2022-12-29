@@ -1,23 +1,27 @@
 use std::convert::TryInto;
+use std::sync::Arc;
 
 use assignment_2_solution::{
     run_register_process, serialize_register_command, ClientRegisterCommand, Configuration,
     PublicConfiguration, RegisterCommand, SectorVec, StatusCode, MAGIC_NUMBER,
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, Mac, NewMac};
 use rand::Rng;
 use sha2::Sha256;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::process::Command;
 use tokio::time::Duration;
+
+use crate::proxy::{ARProxy, ProxyConfig};
 
 pub const HMAC_TAG_SIZE: usize = 32;
 
 pub struct RegisterResponse {
     pub header: RegisterResponseHeader,
     pub content: RegisterResponseContent,
-    pub hmac_tag: [u8; HMAC_TAG_SIZE],
+    hmac_tag: [u8; HMAC_TAG_SIZE],
 }
 
 impl RegisterResponse {
@@ -44,12 +48,48 @@ pub struct TestProcessesConfig {
     hmac_system_key: Vec<u8>,
     storage_dirs: Vec<TempDir>,
     tcp_locations: Vec<(String, u16)>,
+    proxied_locations: Vec<(String, u16)>,
+    proxies: Option<Vec<Arc<ARProxy>>>,
 }
 
 impl TestProcessesConfig {
-    pub const N_SECTORS: u64 = 65536;
+    pub const MAX_SECTOR: u64 = 1024;
 
-    pub fn new(processes_count: usize, port_range_start: u16) -> Self {
+    pub fn new(
+        processes_count: usize,
+        port_range_start: u16,
+        proxy_conf: Option<ProxyConfig>,
+    ) -> Self {
+        let tcp_locations: Vec<(String, u16)> = (0..processes_count)
+            .map(|idx| {
+                (
+                    "localhost".to_string(),
+                    port_range_start + 2 * idx as u16 + 1,
+                )
+            })
+            .collect();
+        println!("tcp locations {:?}", tcp_locations);
+        let proxied_locations: Vec<(String, u16)> = (0..processes_count)
+            .map(|idx| ("localhost".to_string(), port_range_start + 2 * idx as u16))
+            .collect();
+    
+        println!("proxied locations {:?}", proxied_locations);
+        let proxies = if proxy_conf.is_some() {
+            let proxies = tcp_locations
+                .iter()
+                .zip(proxied_locations.iter())
+                .map(|(bind_addr, remote_addr)| {
+                    ARProxy::new(
+                        bind_addr.clone(),
+                        remote_addr.clone(),
+                        proxy_conf.as_ref().unwrap().clone(),
+                    )
+                })
+                .collect();
+            Some(proxies)
+        } else {
+            None
+        };
         TestProcessesConfig {
             hmac_client_key: (0..32)
                 .map(|_| rand::thread_rng().gen_range(0..255))
@@ -60,13 +100,17 @@ impl TestProcessesConfig {
             storage_dirs: (0..processes_count)
                 .map(|_| tempfile::tempdir().unwrap())
                 .collect(),
-            tcp_locations: (0..processes_count)
-                .map(|idx| ("localhost".to_string(), port_range_start + idx as u16))
-                .collect(),
+            tcp_locations,
+            proxied_locations,
+            proxies,
         }
     }
 
     fn config(&self, proc_idx: usize) -> Configuration {
+        let mut tcp_locations = self.tcp_locations.clone();
+        if self.proxies.is_some() {
+            tcp_locations[proc_idx] = self.proxied_locations[proc_idx].clone();
+        }
         Configuration {
             public: PublicConfiguration {
                 storage_dir: self
@@ -75,9 +119,9 @@ impl TestProcessesConfig {
                     .unwrap()
                     .path()
                     .to_path_buf(),
-                tcp_locations: self.tcp_locations.clone(),
+                tcp_locations,
                 self_rank: (proc_idx + 1) as u8,
-                n_sectors: TestProcessesConfig::N_SECTORS,
+                n_sectors: TestProcessesConfig::MAX_SECTOR,
             },
             hmac_system_key: self.hmac_system_key.clone().try_into().unwrap(),
             hmac_client_key: self.hmac_client_key.clone().try_into().unwrap(),
@@ -86,8 +130,20 @@ impl TestProcessesConfig {
 
     pub async fn start(&self) {
         let processes_count = self.storage_dirs.len();
-        for idx in 0..processes_count {
-            tokio::spawn(run_register_process(self.config(idx)));
+        match self.proxies {
+            Some(ref proxies) => {
+                for idx in 0..processes_count {
+                    tokio::spawn(proxies[idx].clone().run());
+                }
+                for idx in 0..processes_count {
+                    tokio::spawn(run_register_process(self.config(idx)));
+                }
+            }
+            None => {
+                for idx in 0..processes_count {
+                    tokio::spawn(run_register_process(self.config(idx)));
+                }
+            }
         }
         wait_for_tcp_listen().await;
     }
@@ -97,21 +153,16 @@ impl TestProcessesConfig {
         serialize_register_command(register_cmd, &mut data, &self.hmac_client_key)
             .await
             .unwrap();
-        log::debug!("Sending client message");
+
         stream.write_all(&data).await.unwrap();
     }
 
-    pub async fn send_cmd_my(&self, register_cmd: &RegisterCommand, stream: &mut Vec<u8>) {
-        let mut data = Vec::new();
-        serialize_register_command(register_cmd, &mut data, &self.hmac_client_key)
-            .await
-            .unwrap();
-        log::debug!("Sending client message");
-        stream.extend(&data);
-    }
     pub async fn connect(&self, proc_idx: usize) -> TcpStream {
-        let location = self.tcp_locations.get(proc_idx).unwrap();
-        TcpStream::connect((location.0.as_str(), location.1))
+        let location = match self.proxies {
+            Some(_) => self.proxied_locations.get(proc_idx).unwrap(),
+            None => self.tcp_locations.get(proc_idx).unwrap(),
+        };
+        TcpStream::connect(location)
             .await
             .expect("Could not connect to TCP port")
     }
@@ -167,6 +218,14 @@ impl TestProcessesConfig {
         assert!(self.hmac_tag_is_ok(response));
     }
 
+    pub fn enable(&self, idx: usize) {
+        self.proxies.as_ref().expect("Can't enable without proxy")[idx].enable();
+    }
+
+    pub fn disable(&self, idx: usize) {
+        self.proxies.as_ref().expect("Can't disable without proxy")[idx].disable();
+    }
+
     fn hmac_tag_is_ok(&self, response: &RegisterResponse) -> bool {
         let msg_type = response.msg_type();
         let mut data = vec![];
@@ -180,7 +239,27 @@ impl TestProcessesConfig {
 
         let mut mac = HmacSha256::new_from_slice(&self.hmac_client_key).unwrap();
         mac.update(&data);
-        mac.verify_slice(&response.hmac_tag).is_ok()
+        mac.verify(response.hmac_tag.as_ref()).is_ok()
+    }
+
+    pub async fn get_dir_size(&self, idx: usize) -> usize {
+        let temp_dir = self.storage_dirs[idx].path();
+        let path_str = temp_dir.as_os_str().to_str().unwrap();
+        let output = Command::new("du")
+            .arg("-cs")
+            .arg("-B1")
+            .arg(path_str)
+            .output()
+            .await
+            .unwrap();
+        let size_str = std::str::from_utf8(&output.stdout)
+            .unwrap()
+            .split("\t")
+            .next()
+            .unwrap();
+        println!("Size str: {:?}", size_str.as_bytes());
+        let size = size_str.parse::<usize>().unwrap();
+        size
     }
 }
 
