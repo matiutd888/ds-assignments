@@ -228,7 +228,7 @@ impl TcpReader {
         hmac_system_key_arc: Arc<[u8; 64]>,
         n_sectors: u64,
     ) {
-        let (s_op_success, r_op_success) = channel::<ClientCommandResponseTransfer>(2137);
+        let (s_op_success, r_op_success) = channel::<ClientCommandResponseTransfer>(2000);
         let (reader, writer) = stream.into_split();
 
         let hmac_client_key = hmac_client_key_arc.as_ref().clone();
@@ -320,12 +320,12 @@ struct AtomicHandler {
 }
 
 impl AtomicHandler {
-    const SYSTEM_CHANNEL_SIZE: usize = 2137;
+    const SYSTEM_CHANNEL_SIZE: usize = 2000;
 
     // TODO think about making it 1.
     // Since one atomic register can execute only one operation at a time (for a given sector),
     // the operations shall be queued. We suggest using a TCP buffer itself as the queue
-    const CLIENT_CHANNEL_SIZE: usize = 5;
+    const CLIENT_CHANNEL_SIZE: usize = 2000;
 
     fn create_atomic_handler(n_sectors: u64, self_rank: u8) -> AtomicHandler {
         let n_atomic_registers = constants::N_ATOMIC_REGISTERS as usize;
@@ -525,5 +525,5 @@ pub mod constants {
     pub const TYPE_WRITE_PROC: u8 = 0x05;
     pub const TYPE_ACK: u8 = 0x06;
 
-    pub const N_ATOMIC_REGISTERS: u8 = 3;
+    pub const N_ATOMIC_REGISTERS: u8 = 100;
 }

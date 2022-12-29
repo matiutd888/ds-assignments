@@ -398,7 +398,6 @@ async fn works_after_recover() {
     println!("DISABLING 2");
     config.disable(4);
     config.disable(3);
-
     config.disable(1);
 
     for cmd_idx in 0..commands_total {

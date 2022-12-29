@@ -150,7 +150,6 @@ impl ARProxy {
                             return Err(e);
                         }
                     };
-                    println!("RECEIVED {} BYTES ", size);
                     if size == 0 {
                         debug!("[Proxy Receiver] Read size 0, dropping connection");
                         return Ok(());

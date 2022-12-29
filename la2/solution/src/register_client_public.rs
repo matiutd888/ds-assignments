@@ -66,7 +66,7 @@ impl RegisterClientImpl {
             processes_count: processes_count,
         };
         register_client
-            .spawn_timer(Duration::from_millis(4000))
+            .spawn_timer(Duration::from_millis(2000))
             .await;
         register_client
     }
