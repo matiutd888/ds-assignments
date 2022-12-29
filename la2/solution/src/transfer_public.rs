@@ -29,6 +29,7 @@ pub async fn deserialize_register_command(
 
     loop {
         read_magic_number(data).await?;
+        log::debug!("magic number read");
         let mut pre_type_bytes: [u8; 3] = [0; 3];
         data.read_exact(&mut pre_type_bytes).await?;
         let msg_type = data.read_u8().await?;
@@ -530,7 +531,8 @@ pub async fn serialize_client_response(
     buffer = c.request_number.custom_serialize(buffer);
     buffer = c.content.custom_serialize(buffer);
     buffer.extend(calculate_hmac_tag(&buffer, hmac_client_key));
-    writer.write_all(&buffer).await
+    writer.write_all(&buffer).await?;
+    Ok(())
 }
 
 impl ClientCommandResponseTransfer {

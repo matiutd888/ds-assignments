@@ -22,7 +22,7 @@ use tokio::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpListener, TcpStream,
     },
-    select,
+    process, select,
     sync::mpsc::{channel, Receiver, Sender},
 };
 pub use transfer_public::*;
@@ -77,7 +77,9 @@ impl TcpReader {
             loop {
                 let accept_res = reader.socket.accept().await;
                 match accept_res {
-                    Ok((stream, _)) => {
+                    Ok((stream, sockaddr)) => {
+
+                        log::debug!("{}: NEW CONNECTION FROM {}", atomic_register_handler.self_rank, sockaddr);
                         Self::spawn_connection_task(
                             stream,
                             atomic_register_handler.clone(),
@@ -97,7 +99,7 @@ impl TcpReader {
         stream: &mut OwnedWriteHalf,
         c: &ClientCommandResponseTransfer,
         hmac_client_key: &[u8; 32],
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), std::io::Error> {   
         serialize_client_response(c, stream, &hmac_client_key).await
     }
 
@@ -198,19 +200,22 @@ impl TcpReader {
                         } else {
                             match cmd {
                                 RegisterCommand::Client(c) => {
-                                    log::error!("Invalid hmac in client command {:?}", c);
+                                    log::error!("Invalid hmac in client command");
                                     sender_op_end
                                         .send(ClientCommandResponseTransfer::from_invalid_hmac(&c))
                                         .await
                                         .unwrap();
                                 }
                                 RegisterCommand::System(_) => {
-                                    log::error!("Invalid hmac in system command {:?}", cmd)
+                                    log::error!("Invalid hmac in system command")
                                 }
                             }
                         }
                     }
-                    Err(err) => log::debug!("Error while deserializing {}", err),
+                    Err(err) => {
+                        log::warn!("{}, Error while deserializing {}", std::process::id(), err);
+                        break;
+                    }
                 }
             }
         });
@@ -274,7 +279,7 @@ pub async fn run_register_process(config: Configuration) {
 
     let sectors_manager = build_sectors_manager(sectors_manager_path);
 
-    let atomic_handler = AtomicHandler::create_atomic_handler(config.public.n_sectors);
+    let atomic_handler = AtomicHandler::create_atomic_handler(config.public.n_sectors, self_rank);
 
     let command_disposer = atomic_handler.disposer.clone();
     let register_client = Arc::new(
@@ -305,6 +310,7 @@ struct AtomicRegisterCommandsDisposer {
     system_senders: Vec<Sender<SystemAtomicRegisterTaskCommand>>,
     n_atomic_registers: usize,
     n_sectors: u64,
+    self_rank: u8,
 }
 
 struct AtomicHandler {
@@ -321,7 +327,7 @@ impl AtomicHandler {
     // the operations shall be queued. We suggest using a TCP buffer itself as the queue
     const CLIENT_CHANNEL_SIZE: usize = 5;
 
-    fn create_atomic_handler(n_sectors: u64) -> AtomicHandler {
+    fn create_atomic_handler(n_sectors: u64, self_rank: u8) -> AtomicHandler {
         let n_atomic_registers = constants::N_ATOMIC_REGISTERS as usize;
 
         let mut client_senders: Vec<Sender<ClientAtomicRegisterTaskCommand>> =
@@ -349,6 +355,7 @@ impl AtomicHandler {
             client_senders: client_senders,
             n_atomic_registers: n_atomic_registers,
             n_sectors,
+            self_rank,
         };
 
         AtomicHandler {
@@ -389,12 +396,12 @@ impl AtomicHandler {
             let mut messages_during_current_request: HashSet<Uuid> = HashSet::new();
             loop {
                 if let Some((current_sector, success_sender)) = &current_operation_data {
-                    log::debug!(
-                        "{}, {}: processing sector {}",
-                        self_rank,
-                        register_index,
-                        current_sector
-                    );
+                    // log::debug!(
+                    //     "{}, {}: processing sector {}",
+                    //     self_rank,
+                    //     register_index,
+                    //     current_sector
+                    // );
                     select! {
                         Some(cmd) = r_s.recv() => {
                             if !messages_during_current_request.contains(&cmd.header.msg_ident) {
@@ -479,7 +486,6 @@ type ClientAtomicRegisterTaskCommand =
 
 impl AtomicRegisterCommandsDisposer {
     fn get_index_from_sector(&self, sector_idx: u64) -> usize {
-        // TODO check sector_idx
         (sector_idx % self.n_atomic_registers as u64) as usize
     }
 
@@ -487,12 +493,13 @@ impl AtomicRegisterCommandsDisposer {
         match command {
             AtomicRegisterTaskCommand::ClientCommand(c) => {
                 let sender_index = self.get_index_from_sector(c.0.header.sector_idx);
-                log::debug!("Command disposer - received new command for sector {} that will be distributed to {}", c.0.header.sector_idx, sender_index);
+                log::debug!("{}: Command disposer - CLIENT for sector {} to task {}", self.self_rank, c.0.header.sector_idx, sender_index);
                 let q = self.client_senders.get(sender_index).unwrap();
                 q.send(c).await.unwrap();
             }
             AtomicRegisterTaskCommand::SystemCommand(s) => {
                 let sender_index = self.get_index_from_sector(s.header.sector_idx);
+                log::debug!("{}: Command disposer - SYSTEM for sector {} to task {}", self.self_rank, s.header.sector_idx, sender_index);
                 let q = self.system_senders.get(sender_index).unwrap();
                 q.send(s).await.unwrap();
             }

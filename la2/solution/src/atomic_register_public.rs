@@ -92,8 +92,6 @@ impl Algorithm {
 struct AtomicRegisterImpl {
     name: String,
     rid: u64,
-    // This really should always have only one element!
-    // TODO change this to option
     a: Option<Algorithm>,
     metadata: Box<dyn StableStorage>,
     register_client: Arc<dyn RegisterClient>,

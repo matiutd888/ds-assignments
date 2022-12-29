@@ -36,7 +36,6 @@ pub struct Send {
 }
 
 pub struct RegisterClientImpl {
-    // TODO Add updating list of processes we need to rebroadcast to
     to_rebroadcast: Arc<RwLock<HashMap<SectorIdx, Broadcast>>>,
     self_sender: Arc<dyn MySender<SystemRegisterCommand>>,
     tcp_sender: Sender<Send>,
@@ -165,22 +164,40 @@ impl TcpSender {
         loop {
             let new_command = self.receiver.recv().await.unwrap();
             let index = new_command.target as usize - 1;
+            log::debug!("Trying to send to process {} from address {:?}", new_command.target, self.tcp_locations.get(index).unwrap());
             if self.streams.get(index).unwrap().is_none() {
+                println!(
+                    "No stream to process {}, trying to connect",
+                    new_command.target
+                );
                 self.connect(index).await;
             }
-            if let Some(tcp) = self.streams.get_mut(index).unwrap() {
-                let _ans = serialize_register_command(
+
+            let s = self.streams.get_mut(index).unwrap();
+            if let Some(tcp) = s {
+                match serialize_register_command(
                     &RegisterCommand::System(new_command.cmd.as_ref().clone()),
                     tcp,
                     &self.hmac_key,
                 )
-                .await;
-                // TODO handle ans?
+                .await
+                {
+                    Ok(_) => {
+                        log::debug!("serialize to {} successful", new_command.target);
+                    },
+                    Err(_) => {
+                        log::debug!("serialize to {} not successful", new_command.target);
+                        *s = None;
+                    },
+                }
+            } else {
+                log::debug!("Couldnt connect to process {}", new_command.target);
             }
         }
     }
 
     async fn connect(&mut self, index: usize) {
+        log::debug!("Connecting to {:?}", self.tcp_locations.get(index).unwrap());
         self.streams.insert(
             index,
             TcpStream::connect(self.tcp_locations.get(index).unwrap())
@@ -213,10 +230,7 @@ impl RegisterClient for RegisterClientImpl {
     }
 
     async fn broadcast(&self, msg: Broadcast) {
-        // log::debug!(
-        //     "{} received broadcast command", self.self_rank,
-        // );
-
+        println!("Broadcast {}", self.processes_count);
         Self::handle_broadcast(
             &msg,
             &self.self_sender,
