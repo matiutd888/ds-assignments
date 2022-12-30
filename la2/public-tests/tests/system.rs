@@ -7,6 +7,7 @@ use assignment_2_test_utils::proxy::ProxyConfig;
 use assignment_2_test_utils::system::*;
 use hmac::{Mac, NewMac};
 use ntest::timeout;
+use tokio::time::sleep;
 use std::convert::TryInto;
 use std::time::Duration;
 use tempfile::tempdir;
@@ -254,10 +255,12 @@ async fn space_taken_within_limit() {
             .await;
     }
 
-    for _ in 0..commands_total {
-        config.read_response(&mut stream).await.unwrap();
+    for i in 0..commands_total {
+        let response = config.read_response(&mut stream).await.unwrap();
+        println!("{}: {:?}", i, response.header);
     }
 
+    
     let size = config.get_dir_size(0).await;
     println!("size is equal to {}", size);
     println!("{}", (1.1 * (commands_total * 4096) as f64) as usize);

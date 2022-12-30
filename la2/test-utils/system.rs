@@ -18,6 +18,7 @@ use crate::proxy::{ARProxy, ProxyConfig};
 
 pub const HMAC_TAG_SIZE: usize = 32;
 
+#[derive(Debug)]
 pub struct RegisterResponse {
     pub header: RegisterResponseHeader,
     pub content: RegisterResponseContent,
@@ -33,11 +34,14 @@ impl RegisterResponse {
     }
 }
 
+
+#[derive(Debug)]
 pub struct RegisterResponseHeader {
     pub status_code: StatusCode,
     pub request_identifier: u64,
 }
 
+#[derive(Debug)]
 pub enum RegisterResponseContent {
     Read(SectorVec),
     Write,
@@ -53,7 +57,7 @@ pub struct TestProcessesConfig {
 }
 
 impl TestProcessesConfig {
-    pub const MAX_SECTOR: u64 = 1024;
+    pub const MAX_SECTOR: u64 = 2048;
 
     pub fn new(
         processes_count: usize,
