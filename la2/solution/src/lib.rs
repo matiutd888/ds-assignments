@@ -7,7 +7,7 @@ mod sectors_manager_public;
 mod stable_storage_public;
 mod transfer_public;
 
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 pub use crate::domain::*;
 pub use atomic_register_public::*;
@@ -21,11 +21,12 @@ use tokio::{
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpListener, TcpStream,
-    }, select,
+    },
+    select,
     sync::mpsc::{channel, Receiver, Sender},
 };
 pub use transfer_public::*;
-use uuid::Uuid;
+
 
 type MyRegisterClient = NewRegisterClientImpl;
 
@@ -39,20 +40,20 @@ pub trait MySender<T>: MarkerSend + Sync {
 // Każde połączenie to osobny async task
 // TODO Muszę pomyśleć, w jaki sposób powinienem przekazywać
 // wiadomość o zakończeniu operacji odpowiedniemu taskowi
-struct TcpReader {
+struct TcpServer {
     socket: TcpListener,
     hmac_system_key: [u8; 64],
     hmac_client_key: [u8; 32],
 }
 
-impl TcpReader {
+impl TcpServer {
     pub async fn new(
         tcp_address: &(String, u16),
         hmac_system_key: [u8; 64],
         hmac_client_key: [u8; 32],
-    ) -> TcpReader {
+    ) -> TcpServer {
         let s = Self::bind(tcp_address).await;
-        TcpReader {
+        TcpServer {
             hmac_client_key: hmac_client_key,
             hmac_system_key: hmac_system_key,
             socket: s,
@@ -65,8 +66,8 @@ impl TcpReader {
     }
 
     async fn start(
-        reader: TcpReader,
-        atomic_register_handler: Arc<AtomicRegisterCommandsDisposer>,
+        reader: TcpServer,
+        atomic_register_handler: Arc<AtomicRegisterCommandsDispatcher>,
     ) {
         let n_sectors = atomic_register_handler.n_sectors;
 
@@ -79,8 +80,11 @@ impl TcpReader {
                 let accept_res = reader.socket.accept().await;
                 match accept_res {
                     Ok((stream, sockaddr)) => {
-
-                        log::debug!("{}: NEW CONNECTION FROM {}", atomic_register_handler.self_rank, sockaddr);
+                        log::debug!(
+                            "{}: NEW CONNECTION FROM {}",
+                            atomic_register_handler.self_rank,
+                            sockaddr
+                        );
                         Self::spawn_connection_task(
                             stream,
                             atomic_register_handler.clone(),
@@ -100,7 +104,7 @@ impl TcpReader {
         stream: &mut OwnedWriteHalf,
         c: &ClientCommandResponseTransfer,
         hmac_client_key: &[u8; 32],
-    ) -> Result<(), std::io::Error> {   
+    ) -> Result<(), std::io::Error> {
         serialize_client_response(c, stream, &hmac_client_key).await
     }
 
@@ -159,7 +163,7 @@ impl TcpReader {
         reader_raw: OwnedReadHalf,
         hmac_client_key: [u8; 32],
         hmac_system_key: [u8; 64],
-        command_disposer: Arc<AtomicRegisterCommandsDisposer>,
+        command_disposer: Arc<AtomicRegisterCommandsDispatcher>,
         sender_op_end: Sender<ClientCommandResponseTransfer>,
         n_sectors: u64,
     ) {
@@ -196,7 +200,7 @@ impl TcpReader {
                                         AtomicRegisterTaskCommand::SystemCommand(s)
                                     }
                                 };
-                                command_disposer.send_dispose(atomic_object_message).await;
+                                command_disposer.dispatch(atomic_object_message).await;
                             }
                         } else {
                             match cmd {
@@ -208,7 +212,11 @@ impl TcpReader {
                                         .unwrap();
                                 }
                                 RegisterCommand::System(s) => {
-                                    log::error!("Invalid hmac in system command {} with header {:?}", get_type_system(&s), s.header)
+                                    log::error!(
+                                        "Invalid hmac in system command {} with header {:?}",
+                                        get_type_system(&s),
+                                        s.header
+                                    )
                                 }
                             }
                         }
@@ -224,7 +232,7 @@ impl TcpReader {
 
     async fn spawn_connection_task(
         stream: TcpStream,
-        command_disposer: Arc<AtomicRegisterCommandsDisposer>,
+        command_disposer: Arc<AtomicRegisterCommandsDispatcher>,
         hmac_client_key_arc: Arc<[u8; 32]>,
         hmac_system_key_arc: Arc<[u8; 64]>,
         n_sectors: u64,
@@ -266,7 +274,7 @@ pub async fn run_register_process(config: Configuration) {
 
     let self_rank = config.public.self_rank;
     let self_rank_index = (self_rank - 1) as usize;
-    let reader: TcpReader = TcpReader::new(
+    let reader: TcpServer = TcpServer::new(
         config.public.tcp_locations.get(self_rank_index).unwrap(),
         config.hmac_system_key,
         config.hmac_client_key,
@@ -282,7 +290,7 @@ pub async fn run_register_process(config: Configuration) {
 
     let atomic_handler = AtomicHandler::create_atomic_handler(config.public.n_sectors, self_rank);
 
-    let command_disposer = atomic_handler.disposer.clone();
+    let command_disposer = atomic_handler.dispatcher.clone();
     let register_client = Arc::new(
         MyRegisterClient::new(
             self_rank,
@@ -302,11 +310,11 @@ pub async fn run_register_process(config: Configuration) {
         processes_count as u8,
     )
     .await;
-    TcpReader::start(reader, command_disposer.clone()).await;
+    TcpServer::start(reader, command_disposer.clone()).await;
 }
 
 #[derive(Clone)]
-struct AtomicRegisterCommandsDisposer {
+struct AtomicRegisterCommandsDispatcher {
     client_senders: Vec<Sender<ClientAtomicRegisterTaskCommand>>,
     system_senders: Vec<Sender<SystemAtomicRegisterTaskCommand>>,
     n_atomic_registers: usize,
@@ -314,8 +322,141 @@ struct AtomicRegisterCommandsDisposer {
     self_rank: u8,
 }
 
+struct AtomicRegisterTaskOperator {
+    register_index: usize,
+    r_s: Receiver<SystemAtomicRegisterTaskCommand>,
+    r_c: Receiver<ClientAtomicRegisterTaskCommand>,
+    register_client: Arc<MyRegisterClient>,
+    self_rank: u8,
+    atomic_register: Box<dyn AtomicRegister>,
+    r_finished: Receiver<ClientCommandResponseTransfer>,
+    s_finished: Sender<ClientCommandResponseTransfer>,
+}
+
+impl AtomicRegisterTaskOperator {
+    pub async fn new(
+        register_index: usize,
+        original_pathbuf: PathBuf,
+        r_s: Receiver<SystemAtomicRegisterTaskCommand>,
+        r_c: Receiver<ClientAtomicRegisterTaskCommand>,
+        register_client: Arc<MyRegisterClient>,
+        processes_count: u8,
+        sectors_manager: Arc<dyn SectorsManager>,
+        self_rank: u8,
+    ) -> AtomicRegisterTaskOperator {
+        let path = get_atomic_register_metadata_pathbuf(original_pathbuf, register_index);
+        fs::create_dir_all(&path).await.unwrap();
+        let metadata = build_stable_storage(path).await;
+        let a = my_build_atomic_register(
+            format!("{}", register_index),
+            self_rank,
+            metadata,
+            register_client.clone(),
+            sectors_manager,
+            processes_count,
+        )
+        .await;
+
+        let (s_finished, r_finished) = channel(2137);
+
+        AtomicRegisterTaskOperator {
+            register_index,
+            r_s,
+            r_c,
+            register_client,
+            self_rank,
+            atomic_register: a,
+            s_finished,
+            r_finished,
+        }
+    }
+
+    pub async fn new_message_no_current_register_operation(
+        &mut self,
+        s_arc: &Arc<Sender<ClientCommandResponseTransfer>>,
+        current_operation_data: &mut Option<(u64, Sender<ClientCommandResponseTransfer>)>,
+    ) {
+        select! {
+            Some(cmd) = self.r_s.recv() => {
+                self.atomic_register.system_command(cmd).await;
+            },
+
+            Some((cmd, sender)) = self.r_c.recv() => {
+                *current_operation_data = Some((cmd.header.sector_idx, sender));
+                let s_cloned = s_arc.clone();
+                self.atomic_register.client_command(
+                    cmd,
+                    Box::new(|op: OperationSuccess| {
+                        Box::pin(async move {
+                            log::debug!("OPERATION FINISHED, sending operation success");
+                            s_cloned
+                                .send(ClientCommandResponseTransfer::from_success(op))
+                                .await.unwrap();
+                        })
+                    }),
+                )
+                .await
+            }
+        };
+    }
+
+    pub async fn new_message_while_register_operation(
+        &mut self,
+        current_operation_data: &mut Option<(u64, Sender<ClientCommandResponseTransfer>)>,
+    ) {
+        // TODO think about informing client NOT to rebroadcast READ_PROC after receiving correct VALUE
+        // fn inform_register_client_if_neccessary(s: SystemRegisterCommand, operation_data_opt: Option<(u64, Sender<ClientCommandResponseTransfer>)>) -> () {
+        //     if let Some(operation_data) = operation_data_opt {
+        //         match s.content {
+        //             SystemRegisterCommandContent::Value { timestamp, write_rank, sector_data } => {
+        //                 if (operation_data.0 == s.header.sector_idx) {
+
+        //                 }
+        //             },
+        //             _ => (),
+        //         };
+        //     }
+        // }
+
+        if let Some((current_sector, success_sender)) = current_operation_data {
+            select! {
+                Some(cmd) = self.r_s.recv() => {
+                    self.atomic_register.system_command(cmd).await;
+                },
+                Some(op) = self.r_finished.recv() => {
+                    log::debug!("{}, {}: Received info about operation finished!", self.self_rank, self.register_index);
+                    self.register_client.cancel_broadcast(current_sector.clone()).await;
+                    success_sender.send(op).await.unwrap();
+                    *current_operation_data = None;
+                }
+            }
+        }
+    }
+
+    pub async fn handle_new_messages(&mut self) {
+        let s_arc = Arc::new(self.s_finished.clone());
+        let mut current_operation_data: Option<(u64, Sender<ClientCommandResponseTransfer>)> = None;
+
+        loop {
+            if current_operation_data.is_none() {
+                log::debug!(
+                    "{}, {} waiting for task",
+                    self.self_rank,
+                    self.register_index
+                );
+
+                self.new_message_no_current_register_operation(&s_arc, &mut current_operation_data)
+                    .await;
+            } else {
+                self.new_message_while_register_operation(&mut current_operation_data)
+                    .await;
+            }
+        }
+    }
+}
+
 struct AtomicHandler {
-    disposer: Arc<AtomicRegisterCommandsDisposer>,
+    dispatcher: Arc<AtomicRegisterCommandsDispatcher>,
     client_receivers: Vec<Receiver<ClientAtomicRegisterTaskCommand>>,
     system_receivers: Vec<Receiver<SystemAtomicRegisterTaskCommand>>,
 }
@@ -351,7 +492,7 @@ impl AtomicHandler {
             system_receivers.push(r_s);
         }
 
-        let command_disposer = AtomicRegisterCommandsDisposer {
+        let command_disposer = AtomicRegisterCommandsDispatcher {
             system_senders: system_senders,
             client_senders: client_senders,
             n_atomic_registers: n_atomic_registers,
@@ -360,7 +501,7 @@ impl AtomicHandler {
         };
 
         AtomicHandler {
-            disposer: Arc::new(command_disposer),
+            dispatcher: Arc::new(command_disposer),
             client_receivers: client_receivers,
             system_receivers: system_receivers,
         }
@@ -369,81 +510,26 @@ impl AtomicHandler {
     async fn spawn_atomic_register_task(
         register_index: usize,
         original_pathbuf: PathBuf,
-        mut r_s: Receiver<SystemAtomicRegisterTaskCommand>,
-        mut r_c: Receiver<ClientAtomicRegisterTaskCommand>,
+        r_s: Receiver<SystemAtomicRegisterTaskCommand>,
+        r_c: Receiver<ClientAtomicRegisterTaskCommand>,
         register_client: Arc<MyRegisterClient>,
         processes_count: u8,
         sectors_manager: Arc<dyn SectorsManager>,
         self_rank: u8,
     ) {
-        let path = get_atomic_register_metadata_pathbuf(original_pathbuf, register_index);
-        fs::create_dir_all(&path).await.unwrap();
-        let metadata = build_stable_storage(path).await;
-        let mut a = my_build_atomic_register(
-            format!("{}", register_index),
-            self_rank,
-            metadata,
-            register_client.clone(),
-            sectors_manager,
-            processes_count,
-        )
-        .await;
-
         tokio::spawn(async move {
-            let (s, mut r_finished) = channel::<ClientCommandResponseTransfer>(1);
-            let s_arc = Arc::new(s);
-            let mut current_operation_data: Option<(u64, Sender<ClientCommandResponseTransfer>)> =
-                None;
-            let mut messages_during_current_request: HashSet<Uuid> = HashSet::new();
-            loop {
-                if let Some((current_sector, success_sender)) = &current_operation_data {
-                    // log::debug!(
-                    //     "{}, {}: processing sector {}",
-                    //     self_rank,
-                    //     register_index,
-                    //     current_sector
-                    // );
-                    select! {
-                        Some(cmd) = r_s.recv() => {
-                            if !messages_during_current_request.contains(&cmd.header.msg_ident) {
-                                messages_during_current_request.insert(cmd.header.msg_ident.clone());
-                                a.system_command(cmd).await;
-                            }
-                        },
-                        Some(op) = r_finished.recv() => {
-                            log::debug!("{}, {}: Received info about operation finished!", self_rank, register_index);
-                            register_client.cancel_broadcast(current_sector.clone()).await;
-                            success_sender.send(op).await.unwrap();
-                            current_operation_data = None;
-                        }
-                    }
-                } else {
-                    log::debug!("{}, {} waiting for task", self_rank, register_index);
-                    select! {
-                        Some(cmd) = r_s.recv() => {
-                            a.system_command(cmd).await;
-                        },
-
-                        Some((cmd, sender)) = r_c.recv() => {
-                            current_operation_data = Some((cmd.header.sector_idx, sender));
-                            messages_during_current_request.clear();
-                            let s_cloned = s_arc.clone();
-                            a.client_command(
-                                cmd,
-                                Box::new(|op: OperationSuccess| {
-                                    Box::pin(async move {
-                                        log::debug!("OPERATION FINISHED, sending operation success");
-                                        s_cloned
-                                            .send(ClientCommandResponseTransfer::from_success(op))
-                                            .await.unwrap();
-                                    })
-                                }),
-                            )
-                            .await
-                        }
-                    }
-                }
-            }
+            let mut a = AtomicRegisterTaskOperator::new(
+                register_index,
+                original_pathbuf,
+                r_s,
+                r_c,
+                register_client,
+                processes_count,
+                sectors_manager,
+                self_rank,
+            )
+            .await;
+            a.handle_new_messages().await;
         });
     }
 
@@ -485,22 +571,32 @@ type SystemAtomicRegisterTaskCommand = SystemRegisterCommand;
 type ClientAtomicRegisterTaskCommand =
     (ClientRegisterCommand, Sender<ClientCommandResponseTransfer>);
 
-impl AtomicRegisterCommandsDisposer {
+impl AtomicRegisterCommandsDispatcher {
     fn get_index_from_sector(&self, sector_idx: u64) -> usize {
         (sector_idx % self.n_atomic_registers as u64) as usize
     }
 
-    async fn send_dispose(&self, command: AtomicRegisterTaskCommand) {
+    async fn dispatch(&self, command: AtomicRegisterTaskCommand) {
         match command {
             AtomicRegisterTaskCommand::ClientCommand(c) => {
                 let sender_index = self.get_index_from_sector(c.0.header.sector_idx);
-                log::debug!("{}: Command disposer - CLIENT for sector {} to task {}", self.self_rank, c.0.header.sector_idx, sender_index);
+                log::debug!(
+                    "{}: Command disposer - CLIENT for sector {} to task {}",
+                    self.self_rank,
+                    c.0.header.sector_idx,
+                    sender_index
+                );
                 let q = self.client_senders.get(sender_index).unwrap();
                 q.send(c).await.unwrap();
             }
             AtomicRegisterTaskCommand::SystemCommand(s) => {
                 let sender_index = self.get_index_from_sector(s.header.sector_idx);
-                log::debug!("{}: Command disposer - SYSTEM for sector {} to task {}", self.self_rank, s.header.sector_idx, sender_index);
+                log::debug!(
+                    "{}: Command disposer - SYSTEM for sector {} to task {}",
+                    self.self_rank,
+                    s.header.sector_idx,
+                    sender_index
+                );
                 let q = self.system_senders.get(sender_index).unwrap();
                 q.send(s).await.unwrap();
             }
@@ -508,9 +604,9 @@ impl AtomicRegisterCommandsDisposer {
     }
 }
 #[async_trait::async_trait]
-impl MySender<SystemRegisterCommand> for AtomicRegisterCommandsDisposer {
+impl MySender<SystemRegisterCommand> for AtomicRegisterCommandsDispatcher {
     async fn send(&self, command: SystemRegisterCommand) {
-        self.send_dispose(AtomicRegisterTaskCommand::SystemCommand(command))
+        self.dispatch(AtomicRegisterTaskCommand::SystemCommand(command))
             .await;
     }
 }
