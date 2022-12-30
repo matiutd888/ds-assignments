@@ -51,14 +51,15 @@ impl SectorsManagerImpl {
     const TMP_PREFIX: &str = "tmp";
 
     pub async fn build_recover(path: PathBuf) -> Result<SectorsManagerImpl, Error> {
-        async fn cleanup_if_tmp_file(v: &Vec<&str>, path: &PathBuf) {
+        async fn cleanup_if_tmp_file(v: &Vec<&str>, path: &PathBuf) -> Result<(), Error> {
             if v.len() == 2 {
                 let tmp_str = v.get(0).unwrap();
                 let idx = v.get(1).unwrap().parse::<u64>();
                 if tmp_str.eq(&SectorsManagerImpl::TMP_PREFIX) && idx.is_ok() {
-                    fs::remove_file(path).await;
+                    fs::remove_file(path).await?;
                 }
             }
+            Ok(())
         }
 
         fn read_and_add_metadata_if_sector_file(
@@ -91,7 +92,7 @@ impl SectorsManagerImpl {
                     let split = string.split(SectorsManagerImpl::DELIMITER);
                     let v = split.collect::<Vec<&str>>();
                     read_and_add_metadata_if_sector_file(&v, &mut metadata_map);
-                    cleanup_if_tmp_file(&v, &p).await;
+                    cleanup_if_tmp_file(&v, &p).await?;
                 }
             }
         }
