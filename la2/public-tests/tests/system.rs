@@ -259,6 +259,8 @@ async fn space_taken_within_limit() {
     }
 
     let size = config.get_dir_size(0).await;
+    println!("size is equal to {}", size);
+    println!("{}", (1.1 * (commands_total * 4096) as f64) as usize);
     assert!(size > (commands_total * 4096) as usize);
     assert!(size <= (1.1 * (commands_total * 4096) as f64) as usize);
 }
