@@ -44,6 +44,7 @@ pub struct NewRegisterClientImpl {
 }
 
 impl NewRegisterClientImpl {
+    // Channel is big because we want to send as quickly as possible
     const TCP_SENDER_CHANNEL_SIZE: usize = 2000;
     const REBROADCAST_INTERVAL_MILLIS: u64 = 2000;
 

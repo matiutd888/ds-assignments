@@ -44,6 +44,7 @@ struct TcpServer {
 }
 
 impl TcpServer {
+    // We want to send as quickly as possible
     const CLIENT_ANSWER_CHANNEL_SIZE: usize = 2000;
 
     pub async fn new(
@@ -70,7 +71,6 @@ impl TcpServer {
     ) {
         let n_sectors = atomic_register_handler.n_sectors;
 
-        // TODO think about not using arcs.
         let hmac_client_key_arc = Arc::new(reader.hmac_client_key);
         let hmac_system_key_arc = Arc::new(reader.hmac_system_key);
 
@@ -110,6 +110,7 @@ impl TcpServer {
                     let res = serialize_client_response(&op, &mut writer, &hmac_client_key).await;
                     if let Err(err) = res {
                         log::error!("Error {} while writing client response", err);
+                        // If ther was unexpected error while serializing that means that the connection is dead, so we end the task. 
                         break;
                     }
                 }
@@ -177,12 +178,6 @@ impl TcpServer {
                             {
                                 let atomic_object_message = match cmd {
                                     RegisterCommand::Client(c) => {
-                                        // log::debug!(
-                                        //     "DESERIALIZED CLIENT COMMAND {}, {}, {} \n",
-                                        //     c.header.sector_idx,
-                                        //     c.header.request_identifier,
-                                        //     get_type_client(&c),
-                                        // );
                                         AtomicRegisterTaskCommand::ClientCommand((
                                             c,
                                             sender_op_end.clone(),
@@ -456,13 +451,12 @@ struct AtomicHandler {
 impl AtomicHandler {
     const SYSTEM_COMMANDS_CHANNEL_SIZE: usize = 500;
 
-    // TODO think about making it 1.
     // Since one atomic register can execute only one operation at a time (for a given sector),
     // the operations shall be queued. We suggest using a TCP buffer itself as the queue
-    const CLIENT_COMMANDS_CHANNEL_SIZE: usize = 10;
+    const CLIENT_COMMANDS_CHANNEL_SIZE: usize = 30;
 
     fn create_atomic_handler(n_sectors: u64, self_rank: u8) -> AtomicHandler {
-        let n_atomic_registers = constants::N_ATOMIC_REGISTERS as usize;
+        let n_atomic_registers = constants::N_ATOMIC_REGISTERS;
 
         let mut client_senders: Vec<Sender<ClientAtomicRegisterTaskCommand>> =
             Vec::with_capacity(n_atomic_registers);
@@ -614,5 +608,5 @@ pub mod constants {
     pub const TYPE_WRITE_PROC: u8 = 0x05;
     pub const TYPE_ACK: u8 = 0x06;
 
-    pub const N_ATOMIC_REGISTERS: u8 = 128;
+    pub const N_ATOMIC_REGISTERS: usize = 128;
 }
