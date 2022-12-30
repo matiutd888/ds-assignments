@@ -2,7 +2,6 @@ mod domain;
 
 mod atomic_register_public;
 mod register_client_public;
-mod reversible_stable_storage_public;
 mod sectors_manager_public;
 mod stable_storage_public;
 mod transfer_public;
@@ -45,6 +44,8 @@ struct TcpServer {
 }
 
 impl TcpServer {
+    const CLIENT_ANSWER_CHANNEL_SIZE: usize = 2000;
+
     pub async fn new(
         tcp_address: &(String, u16),
         hmac_system_key: [u8; 64],
@@ -98,14 +99,6 @@ impl TcpServer {
         });
     }
 
-    async fn send_client_response(
-        stream: &mut OwnedWriteHalf,
-        c: &ClientCommandResponseTransfer,
-        hmac_client_key: &[u8; 32],
-    ) -> Result<(), std::io::Error> {
-        serialize_client_response(c, stream, &hmac_client_key).await
-    }
-
     async fn spawn_writer_task(
         mut writer: OwnedWriteHalf,
         mut r_op_success: Receiver<ClientCommandResponseTransfer>,
@@ -114,9 +107,10 @@ impl TcpServer {
         tokio::spawn(async move {
             loop {
                 if let Some(op) = r_op_success.recv().await {
-                    let res = Self::send_client_response(&mut writer, &op, &hmac_client_key).await;
+                    let res = serialize_client_response(&op, &mut writer, &hmac_client_key).await;
                     if let Err(err) = res {
                         log::error!("Error {} while writing client response", err);
+                        break;
                     }
                 }
             }
@@ -135,7 +129,7 @@ impl TcpServer {
         match s {
             RegisterCommand::Client(c) => {
                 if !check_sector_idx(c.header.sector_idx, n_sectors) {
-                    log::error!("Invalid sector id {:?}", c.header);
+                    log::warn!("Invalid sector id {:?}", c.header);
 
                     s_op_end
                         .send(ClientCommandResponseTransfer::from_invalid_sector_id(c))
@@ -148,7 +142,7 @@ impl TcpServer {
             }
             RegisterCommand::System(s) => {
                 if !check_sector_idx(s.header.sector_idx, n_sectors) {
-                    log::error!("Invalid sector id {:?}", s.header);
+                    log::warn!("Invalid sector id {:?}", s.header);
                     true
                 } else {
                     false
@@ -203,14 +197,14 @@ impl TcpServer {
                         } else {
                             match cmd {
                                 RegisterCommand::Client(c) => {
-                                    log::error!("Invalid hmac in client command");
+                                    log::warn!("Invalid hmac in client command");
                                     sender_op_end
                                         .send(ClientCommandResponseTransfer::from_invalid_hmac(&c))
                                         .await
                                         .unwrap();
                                 }
                                 RegisterCommand::System(s) => {
-                                    log::error!(
+                                    log::warn!(
                                         "Invalid hmac in system command {} with header {:?}",
                                         get_type_system(&s),
                                         s.header
@@ -235,7 +229,7 @@ impl TcpServer {
         hmac_system_key_arc: Arc<[u8; 64]>,
         n_sectors: u64,
     ) {
-        let (s_op_success, r_op_success) = channel::<ClientCommandResponseTransfer>(2000);
+        let (s_op_success, r_op_success) = channel::<ClientCommandResponseTransfer>(Self::CLIENT_ANSWER_CHANNEL_SIZE);
         let (reader, writer) = stream.into_split();
 
         let hmac_client_key = hmac_client_key_arc.as_ref().clone();
@@ -460,12 +454,12 @@ struct AtomicHandler {
 }
 
 impl AtomicHandler {
-    const SYSTEM_CHANNEL_SIZE: usize = 500;
+    const SYSTEM_COMMANDS_CHANNEL_SIZE: usize = 500;
 
     // TODO think about making it 1.
     // Since one atomic register can execute only one operation at a time (for a given sector),
     // the operations shall be queued. We suggest using a TCP buffer itself as the queue
-    const CLIENT_CHANNEL_SIZE: usize = 10;
+    const CLIENT_COMMANDS_CHANNEL_SIZE: usize = 10;
 
     fn create_atomic_handler(n_sectors: u64, self_rank: u8) -> AtomicHandler {
         let n_atomic_registers = constants::N_ATOMIC_REGISTERS as usize;
@@ -481,8 +475,8 @@ impl AtomicHandler {
             Vec::with_capacity(n_atomic_registers);
 
         for _ in 0..n_atomic_registers {
-            let (s_s, r_s) = channel::<SystemAtomicRegisterTaskCommand>(Self::SYSTEM_CHANNEL_SIZE);
-            let (s_c, r_c) = channel::<ClientAtomicRegisterTaskCommand>(Self::CLIENT_CHANNEL_SIZE);
+            let (s_s, r_s) = channel::<SystemAtomicRegisterTaskCommand>(Self::SYSTEM_COMMANDS_CHANNEL_SIZE);
+            let (s_c, r_c) = channel::<ClientAtomicRegisterTaskCommand>(Self::CLIENT_COMMANDS_CHANNEL_SIZE);
             client_senders.push(s_c);
             system_senders.push(s_s);
 

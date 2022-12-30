@@ -101,6 +101,8 @@ struct AtomicRegisterImpl {
 }
 
 impl AtomicRegisterImpl {
+    const RID_KEY: &str = "rid";
+
     async fn get_val(&self, sector_idx: SectorIdx) -> SectorVec {
         self.sectors_manager.read_data(sector_idx).await
     }
@@ -123,13 +125,13 @@ impl AtomicRegisterImpl {
 
     async fn store_rid(&mut self) {
         self.metadata
-            .put("rid", &self.rid.to_be_bytes())
+            .put(Self::RID_KEY, &self.rid.to_be_bytes())
             .await
             .unwrap();
     }
 
     async fn get_stored_rid(&self) -> u64 {
-        if let Some(rid_bytes) = self.metadata.get("rid").await {
+        if let Some(rid_bytes) = self.metadata.get(Self::RID_KEY).await {
             u64::from_be_bytes(rid_bytes.try_into().unwrap())
         } else {
             0

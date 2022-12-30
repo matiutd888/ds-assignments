@@ -117,8 +117,8 @@ impl ClientCommandReader {
         async_read: &mut (dyn AsyncRead + Send + Unpin),
     ) -> Result<ClientRegisterCommandContent, Error> {
         match self.msg_type {
-            0x1 => Ok(ClientRegisterCommandContent::Read),
-            0x2 => Ok(ClientRegisterCommandContent::Write {
+            constants::TYPE_READ => Ok(ClientRegisterCommandContent::Read),
+            constants::TYPE_WRITE => Ok(ClientRegisterCommandContent::Write {
                 data: self.read_nonempty_content(async_read).await?,
             }),
             _ => Err(Error::new(ErrorKind::Other, "Invalid message type")),
@@ -192,8 +192,8 @@ impl SystemCommandReader {
         async_read: &mut (dyn AsyncRead + Send + Unpin),
     ) -> Result<SystemRegisterCommandContent, Error> {
         match self.msg_type {
-            0x3 => Ok(SystemRegisterCommandContent::ReadProc),
-            0x4 => {
+            constants::TYPE_READ_PROC => Ok(SystemRegisterCommandContent::ReadProc),
+            constants::TYPE_VALUE => {
                 let (ts, wr, v) = self.read_nonempty_content(async_read).await?;
                 Ok(SystemRegisterCommandContent::Value {
                     timestamp: ts,
@@ -201,7 +201,7 @@ impl SystemCommandReader {
                     sector_data: v,
                 })
             }
-            0x5 => {
+            constants::TYPE_WRITE_PROC => {
                 let (ts, wr, v) = self.read_nonempty_content(async_read).await?;
                 Ok(SystemRegisterCommandContent::WriteProc {
                     timestamp: ts,
@@ -209,7 +209,7 @@ impl SystemCommandReader {
                     data_to_write: v,
                 })
             }
-            0x6 => Ok(SystemRegisterCommandContent::Ack),
+            constants::TYPE_ACK => Ok(SystemRegisterCommandContent::Ack),
             _ => Err(Error::new(ErrorKind::Other, "Invalid message type")),
         }
     }
