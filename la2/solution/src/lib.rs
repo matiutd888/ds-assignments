@@ -38,8 +38,6 @@ pub trait MySender<T>: MarkerSend + Sync {
 }
 
 // Każde połączenie to osobny async task
-// TODO Muszę pomyśleć, w jaki sposób powinienem przekazywać
-// wiadomość o zakończeniu operacji odpowiedniemu taskowi
 struct TcpServer {
     socket: TcpListener,
     hmac_system_key: [u8; 64],
@@ -286,7 +284,7 @@ pub async fn run_register_process(config: Configuration) {
     let sectors_manager_path = get_sectors_manager_pathbuf(config.public.storage_dir.clone());
     fs::create_dir_all(&sectors_manager_path).await.unwrap();
 
-    let sectors_manager = build_sectors_manager(sectors_manager_path);
+    let sectors_manager = build_sectors_manager(sectors_manager_path).await;
 
     let atomic_handler = AtomicHandler::create_atomic_handler(config.public.n_sectors, self_rank);
 

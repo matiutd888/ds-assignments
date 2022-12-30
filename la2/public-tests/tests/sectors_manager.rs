@@ -9,7 +9,7 @@ use tempfile::tempdir;
 async fn drive_can_store_data() {
     // given
     let root_drive_dir = tempdir().unwrap();
-    let sectors_manager = build_sectors_manager(root_drive_dir.into_path());
+    let sectors_manager = build_sectors_manager(root_drive_dir.into_path()).await;
 
     // when
     sectors_manager
@@ -29,13 +29,13 @@ async fn data_survives_crash() {
     // given
     let root_drive_dir = tempdir().unwrap();
     {
-        let sectors_manager = build_sectors_manager(root_drive_dir.path().to_path_buf());
+        let sectors_manager = build_sectors_manager(root_drive_dir.path().to_path_buf()).await;
         sectors_manager
             .write(1, &(SectorVec(vec![7; 4096]), 1, 2))
             .await;
     }
 
-    let sectors_manager = build_sectors_manager(root_drive_dir.path().to_path_buf());
+    let sectors_manager = build_sectors_manager(root_drive_dir.path().to_path_buf()).await;
 
     // when
     let (timestamp, write_rank) = sectors_manager.read_metadata(1).await;
@@ -52,7 +52,8 @@ async fn data_survives_crash() {
 async fn concurrent_operation_on_different_sectors() {
     // given
     let root_drive_dir = tempdir().unwrap();
-    let sectors_manager = Arc::new(build_sectors_manager(root_drive_dir.path().to_path_buf()));
+    let sectors_manager =
+        Arc::new(build_sectors_manager(root_drive_dir.path().to_path_buf()).await);
     let tasks: usize = 10;
     let sectors_batch = 16;
     let mut task_handles = vec![];

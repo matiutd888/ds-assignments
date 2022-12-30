@@ -20,7 +20,7 @@ async fn read_triggers_broadcast() {
         1,
         Box::new(RamStableStorage::default()),
         Arc::new(DummyRegisterClient::new(tx)),
-        build_sectors_manager(root_drive_dir.into_path()),
+        build_sectors_manager(root_drive_dir.into_path()).await,
         1,
     )
     .await;

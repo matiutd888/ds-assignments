@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::io::Error;
 
 use tokio::fs::{self, rename, File};
 use tokio::io::AsyncWriteExt;
@@ -25,35 +26,14 @@ pub trait SectorsManager: Send + Sync {
 }
 
 /// Path parameter points to a directory to which this method has exclusive access.
-pub fn build_sectors_manager(path: PathBuf) -> Arc<dyn SectorsManager> {
-    let mut metadata_map = HashMap::new();
-
-    let paths = std::fs::read_dir(&path).unwrap();
-
-    for path_it in paths {
-        if let Some(filename) = path_it.unwrap().path().file_name() {
-            if let Some(string) = filename.to_str() {
-                let split = string.split("-");
-                let v = split.collect::<Vec<&str>>();
-                if v.len() == 3 {
-                    let idx = v.get(0).unwrap().parse::<u64>();
-                    let timestamp = v.get(1).unwrap().parse::<u64>();
-                    let write_rank = v.get(2).unwrap().parse::<u8>();
-                    if idx.is_ok() && timestamp.is_ok() && write_rank.is_ok() {
-                        assert!(
-                            metadata_map
-                                .insert(idx.unwrap(), (timestamp.unwrap(), write_rank.unwrap()))
-                                == None
-                        );
-                    }
-                }
-            }
+/// Path parameter points to a directory to which this method has exclusive access.
+pub async fn build_sectors_manager(path: PathBuf) -> Arc<dyn SectorsManager> {
+    match SectorsManagerImpl::build_recover(path).await {
+        Ok(s) => Arc::new(s),
+        Err(e) => {
+            panic!("Failed to build sector manager {}", e);
         }
     }
-    Arc::new(SectorsManagerImpl {
-        sectors_metadata: RwLock::new(metadata_map),
-        root_storage_dir: path,
-    })
 }
 
 pub type Timestamp = u64;
@@ -67,10 +47,68 @@ struct SectorsManagerImpl {
 }
 
 impl SectorsManagerImpl {
+    const DELIMITER: &str = "-";
+    const TMP_PREFIX: &str = "tmp";
+
+    pub async fn build_recover(path: PathBuf) -> Result<SectorsManagerImpl, Error> {
+        async fn cleanup_if_tmp_file(v: &Vec<&str>, path: &PathBuf) {
+            if v.len() == 2 {
+                let tmp_str = v.get(0).unwrap();
+                let idx = v.get(1).unwrap().parse::<u64>();
+                if tmp_str.eq(&SectorsManagerImpl::TMP_PREFIX) && idx.is_ok() {
+                    fs::remove_file(path).await;
+                }
+            }
+        }
+
+        fn read_and_add_metadata_if_sector_file(
+            v: &Vec<&str>,
+            metadata_map: &mut HashMap<SectorIdx, (Timestamp, WriteRank)>,
+        ) {
+            if v.len() == 3 {
+                let idx = v.get(0).unwrap().parse::<u64>();
+                let timestamp = v.get(1).unwrap().parse::<u64>();
+                let write_rank = v.get(2).unwrap().parse::<u8>();
+                if idx.is_ok() && timestamp.is_ok() && write_rank.is_ok() {
+                    assert!(
+                        metadata_map
+                            .insert(idx.unwrap(), (timestamp.unwrap(), write_rank.unwrap()))
+                            == None
+                    );
+                }
+            }
+        }
+
+        let mut metadata_map = HashMap::new();
+
+        let paths = std::fs::read_dir(&path).unwrap();
+
+        for path_it in paths {
+            let p = path_it?.path();
+
+            if let Some(filename) = p.file_name() {
+                if let Some(string) = filename.to_str() {
+                    let split = string.split(SectorsManagerImpl::DELIMITER);
+                    let v = split.collect::<Vec<&str>>();
+                    read_and_add_metadata_if_sector_file(&v, &mut metadata_map);
+                    cleanup_if_tmp_file(&v, &p).await;
+                }
+            }
+        }
+        return Ok(SectorsManagerImpl {
+            sectors_metadata: RwLock::new(metadata_map),
+            root_storage_dir: path,
+        });
+    }
     const DEFAULT_METADATA: Metadata = (0, 0);
 
     fn create_filename(idx: &SectorIdx, metadata: &Metadata) -> String {
-        format!("{}-{}-{}", idx, metadata.0, metadata.1)
+        let v = vec![
+            idx.to_string(),
+            metadata.0.to_string(),
+            metadata.1.to_string(),
+        ];
+        v.join(SectorsManagerImpl::DELIMITER)
     }
 
     fn append_to_path(&self, append_str: String) -> OsString {
@@ -81,7 +119,9 @@ impl SectorsManagerImpl {
     }
 
     fn create_tmp_filename(idx: SectorIdx) -> String {
-        format!("tmp-{}", idx)
+        let idx_str = idx.to_string();
+        let v = vec![SectorsManagerImpl::TMP_PREFIX, &idx_str];
+        v.join(SectorsManagerImpl::DELIMITER)
     }
 }
 
@@ -113,8 +153,6 @@ impl SectorsManager for SectorsManagerImpl {
             Self::DEFAULT_METADATA.clone()
         }
     }
-
-    // TODO Write cleaup function.
 
     // It can store metadata in filename
     /// Writes a new data, along with timestamp and write rank to some sector.
