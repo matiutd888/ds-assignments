@@ -3,7 +3,7 @@ use log::{debug, warn};
 use rand::distributions::{Distribution, Uniform};
 use rand::{Rng, SeedableRng};
 use tokio::select;
-use std::net::Shutdown;
+
 use std::{io::Error, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::watch;
