@@ -231,7 +231,7 @@ async fn space_taken_within_limit() {
     let _ = env_logger::builder().is_test(true).try_init();
     // given
     let port_range_start = START_PORT + 80;
-    let commands_total = 1000;
+    let commands_total = 2000;
     assert!(TestProcessesConfig::MAX_SECTOR >= 1000);
     let config = TestProcessesConfig::new(1, port_range_start, None);
     config.start().await;
