@@ -343,13 +343,14 @@ async fn hangs_with_minority() {
         Err(_) => (),
     }
 }
+
 #[tokio::test]
 #[timeout(40000)]
 async fn works_after_recover() {
     let _ = env_logger::builder().is_test(true).try_init();
     // given
     let port_range_start = START_PORT + 160;
-    let commands_total = 1;
+    let commands_total = 3;
     let config = TestProcessesConfig::new(
         5,
         port_range_start,
@@ -364,7 +365,7 @@ async fn works_after_recover() {
 
     config.disable(4);
     config.disable(3);
-    config.disable(1);
+    config.disable(2);
 
     for cmd_idx in 0..commands_total {
         config
@@ -384,21 +385,13 @@ async fn works_after_recover() {
     }
 
     tokio::time::sleep(Duration::new(2, 0)).await;
-    println!("ENABLING 2");
-    config.enable(4);
-    config.enable(3);
-
-    config.enable(1);
+    config.enable(2);
 
     for _ in 0..commands_total {
         config.read_response(&mut stream).await.unwrap();
     }
-    println!("JOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO");
 
-    println!("DISABLING 2");
-    config.disable(4);
-    config.disable(3);
-    config.disable(1);
+    config.disable(2);
 
     for cmd_idx in 0..commands_total {
         config
@@ -416,10 +409,8 @@ async fn works_after_recover() {
     }
 
     tokio::time::sleep(Duration::new(2, 0)).await;
-    println!("ENABLING 2");
-    config.enable(1);
+    config.enable(2);
 
-    println!("Reading responses part 2");
     for _ in 0..commands_total {
         let response = config.read_response(&mut stream).await.unwrap();
         match response.content {
