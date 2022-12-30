@@ -357,7 +357,7 @@ impl AtomicRegisterTaskOperator {
         )
         .await;
 
-        let (s_finished, r_finished) = channel(2137);
+        let (s_finished, r_finished) = channel(5);
 
         AtomicRegisterTaskOperator {
             register_index,
@@ -462,12 +462,12 @@ struct AtomicHandler {
 }
 
 impl AtomicHandler {
-    const SYSTEM_CHANNEL_SIZE: usize = 2000;
+    const SYSTEM_CHANNEL_SIZE: usize = 500;
 
     // TODO think about making it 1.
     // Since one atomic register can execute only one operation at a time (for a given sector),
     // the operations shall be queued. We suggest using a TCP buffer itself as the queue
-    const CLIENT_CHANNEL_SIZE: usize = 2000;
+    const CLIENT_CHANNEL_SIZE: usize = 10;
 
     fn create_atomic_handler(n_sectors: u64, self_rank: u8) -> AtomicHandler {
         let n_atomic_registers = constants::N_ATOMIC_REGISTERS as usize;
@@ -622,5 +622,5 @@ pub mod constants {
     pub const TYPE_WRITE_PROC: u8 = 0x05;
     pub const TYPE_ACK: u8 = 0x06;
 
-    pub const N_ATOMIC_REGISTERS: u8 = 100;
+    pub const N_ATOMIC_REGISTERS: u8 = 128;
 }

@@ -259,7 +259,7 @@ pub struct NewRegisterClientImpl {
 }
 
 impl NewRegisterClientImpl {
-    const CHANNEL_SIZE: usize = 5000;
+    const TCP_SENDER_CHANNEL_SIZE: usize = 2000;
 
     pub async fn new(
         self_rank: u8,
@@ -274,7 +274,7 @@ impl NewRegisterClientImpl {
                 None
             } else {
                 let tcp_location = tcp_locations.get(process_id - 1).unwrap().clone();
-                let (s, r) = channel(Self::CHANNEL_SIZE);
+                let (s, r) = channel(Self::TCP_SENDER_CHANNEL_SIZE);
                 let mut tcp_sender = SingleTcpSender::new(tcp_location, r, hmac_key);
                 tokio::spawn(async move {
                     tcp_sender.send_in_loop().await;
