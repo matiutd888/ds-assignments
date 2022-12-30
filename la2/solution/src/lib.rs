@@ -26,7 +26,6 @@ use tokio::{
 };
 pub use transfer_public::*;
 
-
 type MyRegisterClient = NewRegisterClientImpl;
 
 use core::marker::Send as MarkerSend;
@@ -36,7 +35,6 @@ pub trait MySender<T>: MarkerSend + Sync {
     async fn send(&self, s: T);
 }
 
-// Każde połączenie to osobny async task
 struct TcpServer {
     socket: TcpListener,
     hmac_system_key: [u8; 64],
@@ -84,7 +82,7 @@ impl TcpServer {
                             atomic_register_handler.self_rank,
                             sockaddr
                         );
-                        Self::spawn_connection_task(
+                        Self::spawn_connection_tasks(
                             stream,
                             atomic_register_handler.clone(),
                             hmac_client_key_arc.clone(),
@@ -93,7 +91,13 @@ impl TcpServer {
                         )
                         .await
                     }
-                    Err(err) => log::info!("{:?}", err),
+                    Err(err) => {
+                        log::error!(
+                            "Error accepting new connections {:?}, ending accepting task",
+                            err
+                        );
+                        break;
+                    }
                 }
             }
         });
@@ -109,8 +113,11 @@ impl TcpServer {
                 if let Some(op) = r_op_success.recv().await {
                     let res = serialize_client_response(&op, &mut writer, &hmac_client_key).await;
                     if let Err(err) = res {
-                        log::error!("Error {} while writing client response", err);
-                        // If ther was unexpected error while serializing that means that the connection is dead, so we end the task. 
+                        log::debug!(
+                            "Error {} while writing client response, ending writing connection",
+                            err
+                        );
+                        // If ther was unexpected error while serializing that means that the connection is dead, so we end the task.
                         break;
                     }
                 }
@@ -209,7 +216,7 @@ impl TcpServer {
                         }
                     }
                     Err(err) => {
-                        log::warn!("{}, Error while deserializing {}", std::process::id(), err);
+                        log::debug!("Error {} while deserializing, ending reading", err);
                         break;
                     }
                 }
@@ -217,14 +224,15 @@ impl TcpServer {
         });
     }
 
-    async fn spawn_connection_task(
+    async fn spawn_connection_tasks(
         stream: TcpStream,
         command_disposer: Arc<AtomicRegisterCommandsDispatcher>,
         hmac_client_key_arc: Arc<[u8; 32]>,
         hmac_system_key_arc: Arc<[u8; 64]>,
         n_sectors: u64,
     ) {
-        let (s_op_success, r_op_success) = channel::<ClientCommandResponseTransfer>(Self::CLIENT_ANSWER_CHANNEL_SIZE);
+        let (s_op_success, r_op_success) =
+            channel::<ClientCommandResponseTransfer>(Self::CLIENT_ANSWER_CHANNEL_SIZE);
         let (reader, writer) = stream.into_split();
 
         let hmac_client_key = hmac_client_key_arc.as_ref().clone();
@@ -469,8 +477,10 @@ impl AtomicHandler {
             Vec::with_capacity(n_atomic_registers);
 
         for _ in 0..n_atomic_registers {
-            let (s_s, r_s) = channel::<SystemAtomicRegisterTaskCommand>(Self::SYSTEM_COMMANDS_CHANNEL_SIZE);
-            let (s_c, r_c) = channel::<ClientAtomicRegisterTaskCommand>(Self::CLIENT_COMMANDS_CHANNEL_SIZE);
+            let (s_s, r_s) =
+                channel::<SystemAtomicRegisterTaskCommand>(Self::SYSTEM_COMMANDS_CHANNEL_SIZE);
+            let (s_c, r_c) =
+                channel::<ClientAtomicRegisterTaskCommand>(Self::CLIENT_COMMANDS_CHANNEL_SIZE);
             client_senders.push(s_c);
             system_senders.push(s_s);
 
