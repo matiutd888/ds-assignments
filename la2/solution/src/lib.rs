@@ -28,6 +28,8 @@ use tokio::{
 pub use transfer_public::*;
 use uuid::Uuid;
 
+type MyRegisterClient = NewRegisterClientImpl;
+
 use core::marker::Send as MarkerSend;
 
 #[async_trait::async_trait]
@@ -206,8 +208,8 @@ impl TcpReader {
                                         .await
                                         .unwrap();
                                 }
-                                RegisterCommand::System(_) => {
-                                    log::error!("Invalid hmac in system command")
+                                RegisterCommand::System(s) => {
+                                    log::error!("Invalid hmac in system command {} with header {:?}", get_type_system(&s), s.header)
                                 }
                             }
                         }
@@ -283,7 +285,7 @@ pub async fn run_register_process(config: Configuration) {
 
     let command_disposer = atomic_handler.disposer.clone();
     let register_client = Arc::new(
-        RegisterClientImpl::new(
+        MyRegisterClient::new(
             self_rank,
             processes_count,
             config.public.tcp_locations,
@@ -370,7 +372,7 @@ impl AtomicHandler {
         original_pathbuf: PathBuf,
         mut r_s: Receiver<SystemAtomicRegisterTaskCommand>,
         mut r_c: Receiver<ClientAtomicRegisterTaskCommand>,
-        register_client: Arc<RegisterClientImpl>,
+        register_client: Arc<MyRegisterClient>,
         processes_count: u8,
         sectors_manager: Arc<dyn SectorsManager>,
         self_rank: u8,
@@ -450,7 +452,7 @@ impl AtomicHandler {
         atomic_handler: AtomicHandler,
         sectors_manager: Arc<dyn SectorsManager>,
         self_rank: u8,
-        register_client: Arc<RegisterClientImpl>,
+        register_client: Arc<MyRegisterClient>,
         home_dir: PathBuf,
         processes_count: u8,
     ) {
