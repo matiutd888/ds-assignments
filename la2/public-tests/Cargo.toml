@@ -25,3 +25,7 @@ async-channel = "1.6"
 futures = "0.3"
 rand = "0.8"
 serial_test = "0.5"
+
+[[bin]]
+name="benchmark"
+path="src/bin/benchmark/main.rs"
