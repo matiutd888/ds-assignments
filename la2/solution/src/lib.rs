@@ -399,20 +399,6 @@ impl AtomicRegisterTaskOperator {
         &mut self,
         current_operation_data: &mut Option<(u64, Sender<ClientCommandResponseTransfer>)>,
     ) {
-        // TODO think about informing client NOT to rebroadcast READ_PROC after receiving correct VALUE
-        // fn inform_register_client_if_neccessary(s: SystemRegisterCommand, operation_data_opt: Option<(u64, Sender<ClientCommandResponseTransfer>)>) -> () {
-        //     if let Some(operation_data) = operation_data_opt {
-        //         match s.content {
-        //             SystemRegisterCommandContent::Value { timestamp, write_rank, sector_data } => {
-        //                 if (operation_data.0 == s.header.sector_idx) {
-
-        //                 }
-        //             },
-        //             _ => (),
-        //         };
-        //     }
-        // }
-
         if let Some((current_sector, success_sender)) = current_operation_data {
             select! {
                 Some(cmd) = self.r_s.recv() => {
