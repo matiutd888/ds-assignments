@@ -33,7 +33,6 @@ pub async fn build_stable_storage(root_storage_dir: PathBuf) -> Box<dyn StableSt
     })
 }
 
-// TODO write cleanup function
 struct StableStorageImpl {
     root_storage_dir: PathBuf,
 }
