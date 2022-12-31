@@ -7,7 +7,7 @@ use assignment_2_test_utils::proxy::ProxyConfig;
 use assignment_2_test_utils::system::*;
 use hmac::{Mac, NewMac};
 use ntest::timeout;
-use tokio::time::sleep;
+
 use std::convert::TryInto;
 use std::time::Duration;
 use tempfile::tempdir;
