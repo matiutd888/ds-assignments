@@ -23,7 +23,7 @@ struct Opt {
     #[structopt(short = "c", long = "commands", default_value = "1024")]
     commands: u64,
 
-    #[structopt(short = "i", long = "instances", default_value = "1")]
+    #[structopt(short = "i", long = "instances", default_value = "4")]
     instances: u8,
 
     #[structopt(long = "proxy")]
@@ -42,7 +42,7 @@ struct Opt {
     corrupt_chance: f32,
 }
 
-#[tokio::main]
+#[tokio::main(worker_threads = 3)]
 async fn main() {
     env_logger::init();
 
