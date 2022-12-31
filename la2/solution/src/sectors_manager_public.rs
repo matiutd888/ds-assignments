@@ -84,7 +84,7 @@ impl SectorsManagerImpl {
             }
         }
 
-        fn check_if_value_preceding_failed_write(
+        fn check_if_value_from_failed_write(
             v: &Vec<&str>,
             file_path: &PathBuf,
             failed_writes: &mut HashMap<SectorIdx, (Timestamp, WriteRank, PathBuf)>,
@@ -112,13 +112,13 @@ impl SectorsManagerImpl {
         }
 
         async fn handle_value_from_failed_write(
-            root_dir: &PathBuf,
             sector_idx: SectorIdx,
+            root_dir: &PathBuf,
             metadata_map: &mut HashMap<SectorIdx, (Timestamp, WriteRank)>,
             failed_writes: &HashMap<SectorIdx, (Timestamp, WriteRank, PathBuf)>,
         ) -> Result<(), Error> {
+            let val = failed_writes.get(&sector_idx).unwrap();
             if !metadata_map.contains_key(&sector_idx) {
-                let val = failed_writes.get(&sector_idx).unwrap();
                 // Create normal filename from failed write filename and rename the file
                 tokio::fs::rename(
                     val.2.as_os_str(),
@@ -130,7 +130,9 @@ impl SectorsManagerImpl {
                 .await?;
 
                 metadata_map.insert(sector_idx, (val.0, val.1));
-            };
+            } else {
+                tokio::fs::remove_file(val.2.as_os_str()).await?;
+            }
             Ok(())
         }
 
@@ -156,13 +158,13 @@ impl SectorsManagerImpl {
             let v = split.collect::<Vec<&str>>();
             add_metadata_if_sector_file(&v, &mut metadata_map);
             cleanup_if_tmp_file(&v, &file_path).await?;
-            check_if_value_preceding_failed_write(&v, &file_path, &mut failed_writes);
+            check_if_value_from_failed_write(&v, &file_path, &mut failed_writes);
         }
 
         for key in failed_writes.keys() {
             handle_value_from_failed_write(
-                &root_path,
                 key.clone(),
+                &root_path,
                 &mut metadata_map,
                 &failed_writes,
             )
