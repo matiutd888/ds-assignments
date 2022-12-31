@@ -265,10 +265,8 @@ impl SectorsManager for SectorsManagerImpl {
         tmp_file.write_all(&(sector.0 .0)).await.unwrap();
         tmp_file.sync_data().await.unwrap();
 
-        let should_remove_file = {
-            let r = self.sectors_metadata.read().await;
-            (*r).get(&idx).cloned()
-        };
+        let should_remove_file = self.sectors_metadata.read().await.get(&idx).cloned();
+        
 
         if let Some(metadata) = should_remove_file {
             let safety_name =
