@@ -75,7 +75,6 @@ impl Algorithm {
         }
     }
 
-    // [DISC] This function needs to be changed if I decide to store highest on disk.
     fn update_highest(&mut self, timestamp: u64, write_rank: u8, sector_data: SectorVec) {
         let change: bool = if let Some((curr_timestamp, curr_wr, _)) = self.highest {
             (timestamp, write_rank) > (curr_timestamp, curr_wr)
