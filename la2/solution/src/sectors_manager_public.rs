@@ -3,7 +3,7 @@ use std::ffi::OsString;
 
 use std::io::Error;
 
-use tokio::fs::{self, read_dir, rename, File};
+use tokio::fs::{self, rename, File};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
 
@@ -138,12 +138,12 @@ impl SectorsManagerImpl {
 
         let mut metadata_map = HashMap::new();
         let mut failed_writes = HashMap::new();
-        let mut paths = read_dir(&root_path).await.unwrap();
+        let paths = std::fs::read_dir(&root_path).unwrap();
 
         let mut correct_filenames: Vec<String> = Vec::new();
         let mut file_paths: Vec<PathBuf> = Vec::new();
-        while let Ok(path_it) = paths.next_entry().await {
-            if let Some(path_it) = path_it {
+        for path_it in paths {
+            if let Ok(path_it) = path_it {
                 if let Some(filename) = path_it.path().file_name() {
                     if let Some(string) = filename.to_str() {
                         correct_filenames.push(String::from(string));
