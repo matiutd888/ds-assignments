@@ -10,7 +10,6 @@ use std::{path::PathBuf, sync::Arc};
 
 pub use crate::domain::*;
 pub use atomic_register_public::*;
-use env_logger;
 pub use register_client_public::*;
 pub use sectors_manager_public::*;
 pub use stable_storage_public::*;
@@ -265,8 +264,6 @@ fn get_atomic_register_metadata_pathbuf(
 // Task dla każdego atomic register czytający z kolejek
 // Task czytający z tcp clienta i wysyłający odpowiednie rzeczy
 pub async fn run_register_process(config: Configuration) {
-    _ = env_logger::try_init();
-
     let self_rank = config.public.self_rank;
     let self_rank_index = (self_rank - 1) as usize;
     let reader: TcpServer = TcpServer::new(
