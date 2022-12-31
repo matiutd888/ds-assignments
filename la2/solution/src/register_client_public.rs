@@ -204,11 +204,9 @@ impl SingleTcpSender {
 
     async fn send_in_loop(&mut self) {
         loop {
-            let prev: Instant = Instant::now();
             let new_command = self.receiver.recv().await.unwrap();
-            println!("Waited {:?}", Instant::now().duration_since(prev));
             if self.stream.is_none() {
-                println!(
+                log::debug!(
                     "No stream to process {}, trying to connect",
                     new_command.target
                 );
