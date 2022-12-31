@@ -138,17 +138,15 @@ impl SectorsManagerImpl {
 
         let mut metadata_map = HashMap::new();
         let mut failed_writes = HashMap::new();
-        let paths = std::fs::read_dir(&root_path).unwrap();
+        let mut paths = tokio::fs::read_dir(&root_path).await?;
 
         let mut correct_filenames: Vec<String> = Vec::new();
         let mut file_paths: Vec<PathBuf> = Vec::new();
-        for path_it in paths {
-            if let Ok(path_it) = path_it {
-                if let Some(filename) = path_it.path().file_name() {
-                    if let Some(string) = filename.to_str() {
-                        correct_filenames.push(String::from(string));
-                        file_paths.push(path_it.path());
-                    }
+        while let Some(path_it) = paths.next_entry().await? {
+            if let Some(filename) = path_it.path().file_name() {
+                if let Some(string) = filename.to_str() {
+                    correct_filenames.push(String::from(string));
+                    file_paths.push(path_it.path());
                 }
             }
         }
@@ -266,7 +264,6 @@ impl SectorsManager for SectorsManagerImpl {
         tmp_file.sync_data().await.unwrap();
 
         let should_remove_file = self.sectors_metadata.read().await.get(&idx).cloned();
-        
 
         if let Some(metadata) = should_remove_file {
             let safety_name =
@@ -277,6 +274,7 @@ impl SectorsManager for SectorsManagerImpl {
             rename(current_sector_name, safety_name.clone())
                 .await
                 .unwrap();
+            directory.sync_data().await.unwrap();
             rename(tmp_path, key_path).await.unwrap();
             directory.sync_data().await.unwrap();
 
