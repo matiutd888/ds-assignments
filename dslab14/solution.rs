@@ -212,14 +212,6 @@ impl ChordNode {
         system.register_module(node).await
     }
 
-    fn get_up_to_n(&self, all_nodes: &BTreeMap<ChordId, ChordAddr>, n: usize) -> Vec<ChordId> {
-        all_nodes
-            .range((Excluded(self.id), Unbounded))
-            .take(n)
-            .map(|(key, _)| *key)
-            .collect()
-    }
-
     /// For each Chord node, creates a complete routing
     /// state given (an oracle's) information about all
     /// nodes in the system, that is, a mapping
@@ -307,6 +299,14 @@ impl ChordNode {
                     });
                 });
         };
+        {
+            let B = self.rs.finger_table.len();
+            for i in 0..B {
+                let range = (Included(self.id + 1 >> i), Excluded(self.id + 1 >> (i + 1)));
+                todo!("Decide if I should iterate over map element by element and decide if its in range (in time O(|map| + B) 
+                or find element within range from the beginning (in time O(log|map| x B))")
+            }
+        }
         todo!("[MATI] Build also fingers table");
         // FIXME: Implement this function. To this end, you may
         //        find the earlier chord_id_* functions useful.
